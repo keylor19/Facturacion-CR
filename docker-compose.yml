@@ -1,51 +1,53 @@
-version: "3.9"
+x-app: &app
+  build: .
+  env_file: .env
+  volumes:
+    - ./xsd:/app/xsd
+  restart: unless-stopped
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
 
 services:
   api:
-    build: .
+    <<: *app
+    # Aplica las migraciones antes de arrancar
+    command: sh -c "alembic upgrade head && uvicorn api.main:app --host 0.0.0.0 --port 8000 --proxy-headers"
+    # Solo accesible desde el propio servidor: exponer al exterior a través de
+    # NGINX/Caddy con HTTPS.
     ports:
-      - "8000:8000"
-    env_file: .env
-    depends_on:
-      - db
-      - redis
-    volumes:
-      - ./certs:/app/certs:ro
-    restart: unless-stopped
+      - "127.0.0.1:8000:8000"
 
   worker:
-    build: .
+    <<: *app
     command: celery -A workers.celery_app worker --loglevel=info
-    env_file: .env
-    depends_on:
-      - db
-      - redis
-    volumes:
-      - ./certs:/app/certs:ro
-    restart: unless-stopped
 
   beat:
-    build: .
-    command: celery -A workers.celery_app beat --loglevel=info
-    env_file: .env
-    depends_on:
-      - redis
-    restart: unless-stopped
+    <<: *app
+    command: celery -A workers.celery_app beat --loglevel=info --schedule /tmp/celerybeat-schedule
 
   db:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: facturacion
-      POSTGRES_PASSWORD: facturacion
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD en .env}
       POSTGRES_DB: facturacion
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U facturacion"]
+      interval: 5s
+      retries: 10
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
     restart: unless-stopped
 
 volumes:

@@ -1,0 +1,12 @@
+.git
+.env
+certs/
+*.p12
+*.pfx
+*.pem
+*.key
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/

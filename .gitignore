@@ -1,0 +1,23 @@
+# Secretos: NUNCA versionar
+.env
+certs/
+*.p12
+*.pfx
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# XSD oficiales (se descargan de ATV)
+xsd/*.xsd
+
+# IDE / SO
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

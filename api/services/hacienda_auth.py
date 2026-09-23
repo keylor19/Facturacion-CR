@@ -1,27 +1,27 @@
 """
-Autenticación contra Hacienda vía OpenID Connect (OAuth2 - grant_type password).
+Autenticación contra Hacienda vía OpenID Connect (OAuth2 - grant_type password),
+con las credenciales de cada emisor.
 
-Endpoint real:
-  https://idp.comprobanteselectronicos.go.cr/auth/realms/rut/protocol/openid-connect/token
+Endpoints (ver config/settings.py -> HACIENDA_ENDPOINTS):
+  stag: .../auth/realms/rut-stag/protocol/openid-connect/token  (client_id api-stag)
+  prod: .../auth/realms/rut/protocol/openid-connect/token       (client_id api-prod)
 
-Usuario: cpf-01-1234-5678@comprobanteselectronicos.go.cr  (persona física)
-      o: cpj-02-3101123456@comprobanteselectronicos.go.cr  (persona jurídica)
-Contraseña: la que Hacienda envía al buzón electrónico tras activar el
-            módulo de Comprobantes Electrónicos en ATV.
-
-El token dura ~10 minutos (Keycloak estándar de Hacienda), así que lo
-cacheamos en Redis y lo renovamos antes de que expire.
+El token dura pocos minutos, así que lo cacheamos en Redis (por emisor y
+ambiente) y lo renovamos antes de que expire.
 """
-import time
-import requests
+import hashlib
+import logging
+
 import redis
+import requests
 
-from config.settings import get_settings
+from api.models.database import Emisor
+from api.services import emisores
+from api.services.cache import redis_client
+from config.settings import endpoints_hacienda
 
-settings = get_settings()
-_redis = redis.from_url(settings.REDIS_URL, decode_responses=True)
+logger = logging.getLogger(__name__)
 
-TOKEN_CACHE_KEY = "hacienda:access_token"
 MARGEN_SEGURIDAD_SEGUNDOS = 30  # renovar un poco antes de que expire
 
 
@@ -29,49 +29,61 @@ class HaciendaAuthError(Exception):
     pass
 
 
-def _solicitar_token_nuevo() -> dict:
-    # ⚠️ VERIFICAR: el "client_id" exacto para cada ambiente (stag/prod) debe
-    # confirmarse contra el "Anexo 1 - Especificaciones técnicas" vigente que
-    # descargues de ATV, ya que Hacienda lo documenta ahí y puede variar según
-    # el realm. Los valores de abajo son el patrón típico reportado por
-    # integradores, pero no los des por definitivos sin comprobarlos tú mismo
-    # con una prueba real de `curl` contra el endpoint de token.
+def _cache_key(emisor: Emisor) -> str:
+    # El token depende del emisor, del ambiente y del usuario: nunca mezclarlos.
+    usuario = hashlib.sha256((emisor.hacienda_usuario or "").encode()).hexdigest()[:16]
+    return f"hacienda:{emisor.ambiente}:{emisor.id}:{usuario}:access_token"
+
+
+def _solicitar_token_nuevo(emisor: Emisor) -> dict:
+    try:
+        usuario, password = emisores.credenciales(emisor)
+    except emisores.EmisorIncompletoError as exc:
+        raise HaciendaAuthError(str(exc)) from exc
+
+    ep = endpoints_hacienda(emisor.ambiente)
     payload = {
         "grant_type": "password",
-        "client_id": "api-stag" if settings.AMBIENTE == "stag" else "api-prod",
-        "username": settings.HACIENDA_USERNAME,
-        "password": settings.HACIENDA_PASSWORD,
+        "client_id": ep["client_id"],
+        "username": usuario,
+        "password": password,
     }
-    resp = requests.post(settings.HACIENDA_TOKEN_URL, data=payload, timeout=15)
+    try:
+        resp = requests.post(ep["token_url"], data=payload, timeout=15)
+    except requests.RequestException as exc:
+        raise HaciendaAuthError(f"No se pudo contactar el IDP de Hacienda: {exc}") from exc
 
     if resp.status_code != 200:
         raise HaciendaAuthError(
-            f"No se pudo autenticar contra Hacienda ({resp.status_code}): {resp.text}"
+            f"No se pudo autenticar contra Hacienda (HTTP {resp.status_code}): {resp.text[:200]}"
         )
-
     return resp.json()
 
 
-def obtener_token() -> str:
-    """
-    Devuelve un access_token válido. Usa caché en Redis para no pedir un
-    token nuevo en cada factura (Hacienda podría empezar a rechazarte por
-    exceso de solicitudes de autenticación).
-    """
-    cached = _redis.get(TOKEN_CACHE_KEY)
-    if cached:
-        return cached
+def obtener_token(emisor: Emisor, forzar: bool = False) -> str:
+    """Devuelve un access_token válido del emisor, usando caché en Redis."""
+    key = _cache_key(emisor)
+    if not forzar:
+        try:
+            cached = redis_client().get(key)
+        except redis.RedisError:
+            cached = None
+        if cached:
+            return cached
 
-    data = _solicitar_token_nuevo()
+    data = _solicitar_token_nuevo(emisor)
     access_token = data["access_token"]
-    expires_in = int(data.get("expires_in", 300))
-
-    ttl = max(expires_in - MARGEN_SEGURIDAD_SEGUNDOS, 30)
-    _redis.set(TOKEN_CACHE_KEY, access_token, ex=ttl)
-
+    ttl = max(int(data.get("expires_in", 300)) - MARGEN_SEGURIDAD_SEGUNDOS, 30)
+    try:
+        redis_client().set(key, access_token, ex=ttl)
+    except redis.RedisError:
+        logger.warning("No se pudo cachear el token de Hacienda")
     return access_token
 
 
-def invalidar_token_cache():
+def invalidar_token_cache(emisor: Emisor):
     """Llamar esto si Hacienda responde 401 con el token actual, para forzar renovación."""
-    _redis.delete(TOKEN_CACHE_KEY)
+    try:
+        redis_client().delete(_cache_key(emisor))
+    except redis.RedisError:
+        pass
