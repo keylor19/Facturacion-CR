@@ -75,6 +75,27 @@ def cabys(texto: str | None = None, codigo: str | None = None, top: int = 20):
     return _get("/fe/cabys", {"q": texto, "top": top}, f"hp:cabys:q:{texto.lower()}:{top}", ttl=86400)
 
 
+def cabys_inexistentes(codigos: list[str]) -> list[str]:
+    """
+    Códigos que NO existen en el catálogo CABYS. Si el servicio de Hacienda no
+    responde, se asume que existen (no se bloquea la facturación por una caída).
+    """
+    faltantes = []
+    for codigo in dict.fromkeys(codigos):
+        try:
+            resultado = cabys(codigo=codigo)
+        except HaciendaPublicoError as exc:
+            if exc.status_code == 404:
+                faltantes.append(codigo)
+            else:
+                logger.warning("No se pudo validar el CABYS %s: %s", codigo, exc)
+            continue
+        lista = resultado if isinstance(resultado, list) else (resultado or {}).get("cabys", [])
+        if not any(str(c.get("codigo")) == codigo for c in lista):
+            faltantes.append(codigo)
+    return faltantes
+
+
 def tipo_cambio(moneda: str) -> Decimal:
     """Tipo de cambio de referencia (venta) en colones para USD o EUR."""
     moneda = moneda.upper()

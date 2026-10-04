@@ -255,3 +255,20 @@ def test_estadisticas(client):
     r = client.get(f"/api/v1/reportes/estadisticas?anio={hoy.year}&mes={hoy.month}")
     assert r.status_code == 200
     assert r.json()["comprobantes_por_estado"] == {"PENDIENTE": 1}
+
+
+def test_cabys_inexistente_se_rechaza_antes_de_firmar(client, monkeypatch, db):
+    from config.settings import get_settings
+    monkeypatch.setattr(get_settings(), "VALIDAR_CABYS", True)
+    existentes = {"8314100000000"}
+    monkeypatch.setattr(hacienda_publico, "_get",
+                        lambda path, params, key, ttl: [{"codigo": params["codigo"]}] if params.get("codigo") in existentes else [])
+    r = client.post("/api/v1/facturas", json=factura_payload())
+    assert r.status_code == 422 and "2399999009900" in r.json()["detail"]
+    assert db.query(Factura).count() == 0
+
+    # Si el servicio de Hacienda no responde, no se bloquea la facturación
+    def caido(*a, **k):
+        raise hacienda_publico.HaciendaPublicoError("caído")
+    monkeypatch.setattr(hacienda_publico, "_get", caido)
+    assert client.post("/api/v1/facturas", json=factura_payload()).status_code == 202

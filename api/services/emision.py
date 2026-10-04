@@ -120,6 +120,12 @@ def emitir(
         raise EmisionError(409, str(exc))
     verificar_saldo(db, emisor)
 
+    if get_settings().VALIDAR_CABYS:
+        inexistentes = hacienda_publico.cabys_inexistentes([p.codigo_cabys for p in datos.productos])
+        if inexistentes:
+            raise EmisionError(422, "Código(s) CABYS que no existen en el catálogo de Hacienda: "
+                                    + ", ".join(inexistentes) + ". Búsquelos en /api/v1/hacienda/cabys?q=")
+
     if datos.moneda != "CRC" and datos.tipo_cambio is None:
         try:
             datos.tipo_cambio = hacienda_publico.tipo_cambio(datos.moneda)
@@ -154,10 +160,11 @@ def emitir(
     # Partes del JSON de envío (deben coincidir con los nodos Emisor/Receptor del XML)
     empresa = _parte(emisor.tipo_identificacion, emisor.numero_identificacion)
     if datos.tipo_documento == "08":
-        # ⚠️ Verificar en stag: en la FEC el nodo Emisor es el proveedor.
+        # En la FEC el nodo Emisor del XML es el proveedor, pero en el envío el
+        # "emisor" es quien firma y cuya cédula va en la clave (la empresa).
         contraparte = datos.proveedor
-        parte_emisor = _parte(contraparte.tipo_identificacion, contraparte.numero_identificacion) or empresa
-        parte_receptor = empresa
+        parte_emisor = empresa
+        parte_receptor = _parte(contraparte.tipo_identificacion, contraparte.numero_identificacion)
     else:
         contraparte = datos.receptor
         parte_emisor = empresa

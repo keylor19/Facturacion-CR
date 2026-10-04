@@ -60,6 +60,8 @@ TIPO_DOC_MENSAJE_RECEPTOR = {"1": "05", "2": "06", "3": "07"}
 
 CODIGO_IMPUESTO_IVA = "01"
 CODIGO_TARIFA_EXENTA = "10"
+# Tarifas que Hacienda clasifica como NO SUJETAS (verificado en el sandbox)
+CODIGOS_TARIFA_NO_SUJETA = {"01", "11"}
 
 Q5 = Decimal("0.00001")
 CERO = Decimal("0")
@@ -233,6 +235,7 @@ def _calcular_linea(numero: int, p: LineaRequest) -> LineaCalculada:
     # 2) IVA
     factor_exoneracion = CERO
     exento = p.iva_cobrado_fabrica == "02"
+    no_sujeto = p.no_sujeto
     iva_total = CERO
     for imp in p.impuestos_efectivos:
         if imp.codigo not in CODIGOS_IVA:
@@ -247,8 +250,12 @@ def _calcular_linea(numero: int, p: LineaRequest) -> LineaCalculada:
             codigo=imp.codigo, codigo_impuesto_otro=None, codigo_tarifa_iva=imp.codigo_tarifa_iva,
             tarifa=tarifa, factor_calculo_iva=imp.factor_calculo_iva, monto=monto,
         )
+        # Clasificación que aplica Hacienda (verificada en el sandbox): la tarifa
+        # 10 es exenta y las tarifas 01 y 11 cuentan siempre como no sujetas.
         if imp.codigo_tarifa_iva == CODIGO_TARIFA_EXENTA:
             exento = True
+        elif imp.codigo_tarifa_iva in CODIGOS_TARIFA_NO_SUJETA:
+            no_sujeto = True
         if p.exoneracion and imp.codigo == CODIGO_IMPUESTO_IVA and tarifa > 0:
             tarifa_exo = min(p.exoneracion.tarifa_exonerada, tarifa)
             calc.exoneracion = p.exoneracion
@@ -258,11 +265,16 @@ def _calcular_linea(numero: int, p: LineaRequest) -> LineaCalculada:
         iva_total += calc.monto - calc.monto_exoneracion
         impuestos.append(calc)
 
-    # El XSD exige al menos un nodo Impuesto por línea: las líneas no sujetas o
-    # exentas por el sistema de fábrica llevan IVA con monto 0 (tarifa 0% de la
-    # línea si indica una; si no, 10 = exenta). ⚠️ Confirmar criterio en stag.
+    # El XSD exige al menos un nodo Impuesto por línea: las líneas no sujetas
+    # llevan IVA en 0 con tarifa 01 u 11 (Hacienda las clasifica así) y las
+    # exentas por el sistema de fábrica con tarifa 10.
     if (p.no_sujeto or p.iva_cobrado_fabrica == "02") and not any(i.codigo in CODIGOS_IVA for i in impuestos):
-        codigo_cero = p.codigo_tarifa_iva if TARIFAS_IVA[p.codigo_tarifa_iva] == 0 else CODIGO_TARIFA_EXENTA
+        if p.iva_cobrado_fabrica == "02":
+            codigo_cero = CODIGO_TARIFA_EXENTA
+        elif p.codigo_tarifa_iva in CODIGOS_TARIFA_NO_SUJETA:
+            codigo_cero = p.codigo_tarifa_iva
+        else:
+            codigo_cero = "01"
         impuestos.append(ImpuestoCalculado(
             codigo=CODIGO_IMPUESTO_IVA, codigo_impuesto_otro=None, codigo_tarifa_iva=codigo_cero,
             tarifa=CERO, factor_calculo_iva=None, monto=CERO,
@@ -277,7 +289,7 @@ def _calcular_linea(numero: int, p: LineaRequest) -> LineaCalculada:
 
     # 4) Clasificación de la venta para el resumen
     parte_no_sujeta = CERO
-    if p.no_sujeto:
+    if no_sujeto:
         parte_no_sujeta, parte_exenta, parte_exonerada, parte_gravada = monto_total, CERO, CERO, CERO
         categoria = "no_sujeto"
     elif exento:

@@ -70,6 +70,7 @@ os.environ.update({
     "CORS_ORIGINS": "",
     "SMTP_HOST": "",
     "SMTP_FROM": "",
+    "VALIDAR_CABYS": "false",   # las pruebas no consultan el catálogo real (hay una prueba específica)
 })
 
 

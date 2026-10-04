@@ -14,7 +14,8 @@ services:
   api:
     <<: *app
     # Aplica las migraciones antes de arrancar
-    command: sh -c "alembic upgrade head && uvicorn api.main:app --host 0.0.0.0 --port 8000 --proxy-headers"
+    # --forwarded-allow-ips: confiar en la IP real del cliente que envía el proxy (Caddy)
+    command: sh -c "alembic upgrade head && uvicorn api.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"
     # Solo accesible desde el propio servidor: exponer al exterior a través de
     # NGINX/Caddy con HTTPS.
     ports:

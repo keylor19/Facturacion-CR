@@ -146,5 +146,6 @@ def test_webhook_firmado(monkeypatch, db, factura_id):
         return _respuesta(200)
 
     monkeypatch.setattr(webhooks.requests, "post", post)
+    monkeypatch.setattr(webhooks, "destino_permitido", lambda url: True)   # sin depender del DNS
     assert tasks.notificar_webhook("factura", factura_id, "comprobante.aceptado")["status"] == "enviado"
     assert capturado["headers"]["X-Facturacion-Firma"] == webhooks.firmar(capturado["data"], secreto)

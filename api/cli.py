@@ -64,7 +64,29 @@ def main(argv=None):
     grupo.add_argument("--admin", action="store_true", help="Contador/administrador: todas las empresas")
     grupo.add_argument("--emisor", help="ID de la empresa a la que queda restringido")
 
+    p = sub.add_parser("reiniciar-2fa", help="Quita la verificación en dos pasos de un usuario (perdió el teléfono)")
+    p.add_argument("--email", required=True)
+
     args = parser.parse_args(argv)
+
+    if args.comando == "reiniciar-2fa":
+        from sqlalchemy import select
+        from api.models.database import SessionLocal, Usuario
+        from api.services import auditoria, usuarios
+
+        db = SessionLocal()
+        try:
+            u = db.scalar(select(Usuario).where(Usuario.email == args.email.strip().lower()))
+            if u is None:
+                print("Usuario no encontrado", file=sys.stderr)
+                return 1
+            usuarios.reiniciar_2fa(db, u)
+            usuarios.cerrar_todas(db, u.id)
+            auditoria.registrar(db, "usuario.2fa_reiniciada", actor="consola del servidor", detalle=u.email)
+        finally:
+            db.close()
+        print(f"Verificación en dos pasos reiniciada para {args.email}; la configurará de nuevo al ingresar.")
+        return 0
 
     if args.comando == "crear-usuario":
         import getpass

@@ -3,14 +3,14 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from api.models.database import Consumo, Emisor, Factura, Paquete, Plan, get_db
 from api.models.schemas import AcreditarRequest, PlanActualizar, PlanCrear, PlanResponse, TIPOS_COMPROBANTE
 from api.security import Principal, emisor_actual, require_admin
-from api.services import saldo
+from api.services import auditoria, saldo
 from api.services.fechas import zona_cr
 from api.services.reportes import rango_mes
 
@@ -73,22 +73,28 @@ def listar_planes(activos: bool = False, _: Principal = Depends(require_admin), 
 
 
 @admin.post("/planes", response_model=PlanResponse, status_code=201)
-def crear_plan(payload: PlanCrear, _: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+def crear_plan(payload: PlanCrear, request: Request, principal: Principal = Depends(require_admin),
+               db: Session = Depends(get_db)):
     plan = Plan(**payload.model_dump())
     db.add(plan)
     db.commit()
+    auditoria.registrar(db, "plan.crear", principal=principal, request=request,
+                        detalle=f"{plan.nombre}: {plan.documentos} documentos, {plan.precio} {plan.moneda}")
     return _plan(plan)
 
 
 @admin.patch("/planes/{plan_id}", response_model=PlanResponse)
-def actualizar_plan(plan_id: UUID, payload: PlanActualizar, _: Principal = Depends(require_admin),
-                    db: Session = Depends(get_db)):
+def actualizar_plan(plan_id: UUID, payload: PlanActualizar, request: Request,
+                    principal: Principal = Depends(require_admin), db: Session = Depends(get_db)):
     plan = db.get(Plan, str(plan_id))
     if plan is None:
         raise HTTPException(status_code=404, detail="Plan no encontrado")
-    for campo, valor in payload.model_dump(exclude_unset=True).items():
+    cambios = payload.model_dump(exclude_unset=True)
+    for campo, valor in cambios.items():
         setattr(plan, campo, valor)
     db.commit()
+    auditoria.registrar(db, "plan.actualizar", principal=principal, request=request,
+                        detalle=f"{plan.nombre}: " + ", ".join(f"{c}={v}" for c, v in sorted(cambios.items())))
     return _plan(plan)
 
 
@@ -107,8 +113,8 @@ def paquetes_emisor(emisor_id: UUID, _: Principal = Depends(require_admin), db: 
 
 
 @admin.post("/emisores/{emisor_id}/paquetes", status_code=201)
-def acreditar_paquete(emisor_id: UUID, payload: AcreditarRequest, principal: Principal = Depends(require_admin),
-                      db: Session = Depends(get_db)):
+def acreditar_paquete(emisor_id: UUID, payload: AcreditarRequest, request: Request,
+                      principal: Principal = Depends(require_admin), db: Session = Depends(get_db)):
     """Registra la venta de un paquete (pago manual: SINPE, transferencia) o una cortesía."""
     emisor = _emisor(db, emisor_id)
     plan = None
@@ -128,17 +134,23 @@ def acreditar_paquete(emisor_id: UUID, payload: AcreditarRequest, principal: Pri
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    auditoria.registrar(db, "paquete.vender", principal=principal, request=request, emisor_id=emisor.id,
+                        detalle=f"{payload.documentos or (plan.documentos if plan else '')} documentos"
+                        + (f", pago {payload.referencia_pago}" if payload.referencia_pago else ""))
     return {"paquete": saldo.paquete_a_dict(paquete), "disponible": saldo.disponible(db, emisor.id)}
 
 
 @admin.post("/paquetes/{paquete_id}/anular")
-def anular_paquete(paquete_id: UUID, _: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+def anular_paquete(paquete_id: UUID, request: Request, principal: Principal = Depends(require_admin),
+                   db: Session = Depends(get_db)):
     """Anula el saldo restante de un paquete (p. ej. pago revertido). Lo ya consumido se conserva."""
     paquete = db.get(Paquete, str(paquete_id))
     if paquete is None:
         raise HTTPException(status_code=404, detail="Paquete no encontrado")
     paquete.anulado = True
     db.commit()
+    auditoria.registrar(db, "paquete.anular", principal=principal, request=request, emisor_id=paquete.emisor_id,
+                        detalle=f"paquete {paquete.id}")
     return saldo.paquete_a_dict(paquete)
 
 

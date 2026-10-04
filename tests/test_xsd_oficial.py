@@ -47,7 +47,7 @@ def _caso(nombre):
         p.update(tipo_documento="02", referencia=dict(REF, codigo="04"))
     elif nombre == "compra":
         p.update(tipo_documento="08", receptor=None, proveedor=PROVEEDOR,
-                 referencia=dict(REF, tipo_documento="14", numero=None, codigo="04"))
+                 referencia=dict(REF, tipo_documento="14", numero="00100001010000000001", codigo="04"))
     elif nombre == "exportacion":
         p.update(tipo_documento="09", moneda="USD", tipo_cambio="451.86",
                  receptor={"nombre": "ACME", "identificacion_extranjero": "US123", "otras_senas_extranjero": "Miami"})

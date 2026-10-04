@@ -124,7 +124,24 @@ class Usuario(Base):
     intentos_fallidos = Column(Integer, nullable=False, default=0)
     bloqueado_hasta = Column(DateTime(timezone=True), nullable=True)
     ultimo_login = Column(DateTime(timezone=True), nullable=True)
+    # Verificación en dos pasos (TOTP). El secreto se guarda cifrado con MASTER_KEY.
+    totp_secreto_cifrado = Column(LargeBinary, nullable=True)
+    totp_activo = Column(Boolean, nullable=False, default=False, server_default="false")
+    totp_ultimo_paso = Column(BigInteger, nullable=True)   # evita reutilizar un mismo código
     created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+class Auditoria(Base):
+    """Bitácora de acciones sensibles: quién hizo qué, cuándo y desde dónde."""
+    __tablename__ = "auditoria"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    fecha = Column(DateTime(timezone=True), default=utcnow, index=True)
+    actor = Column(String(200), nullable=False)          # correo del usuario o nombre de la llave
+    accion = Column(String(60), nullable=False, index=True)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="SET NULL"), nullable=True, index=True)
+    detalle = Column(Text, nullable=True)
+    ip = Column(String(64), nullable=True)
 
 
 class Sesion(Base):

@@ -82,7 +82,10 @@ descuenta 1. Sin saldo la emisión responde `402`.
 Límite de uso: `LIMITE_SOLICITUDES_MINUTO` por llave/usuario (429 + `Retry-After`) y
 `LIMITE_LOGIN_MINUTO` por IP en el inicio de sesión.
 
-**Guía para los sistemas de sus clientes:** [docs/integracion.md](docs/integracion.md).
+**Documentación:**
+- [docs/despliegue.md](docs/despliegue.md): poner el servicio en línea (dominio, HTTPS, respaldos).
+- [docs/manual-administrador.md](docs/manual-administrador.md): alta de cada cliente, conexión con Hacienda y venta de documentos.
+- [docs/integracion.md](docs/integracion.md): guía para los programadores de los sistemas de sus clientes.
 Para publicar la documentación interactiva en producción: `DOCS_PUBLICAS=true`.
 
 ## 3. Alta de una empresa (llave de administrador)
@@ -182,14 +185,33 @@ docker compose run --rm -v "/ruta/al/certificado:/cert:ro" -e TEST_P12_PATH=/cer
   -e TEST_P12_PIN=1234 api sh -c "pip install -q --user -r requirements-dev.txt && python -m pytest -q"
 ```
 
-## 7. Antes de producción
-Verificado: estructura contra los XSD oficiales, firma con `xmlsec1` (incluida
-la cadena de confianza de un certificado real del sandbox de Hacienda),
-endpoints de autenticación de stag/prod, servicios públicos de Hacienda y
-hash de la política de firma. **Falta la prueba con credenciales reales**:
-emita en `stag` al menos un comprobante de cada tipo que vaya a usar y un
-Mensaje Receptor, y confirme que Hacienda los acepta antes de pasar a `prod`.
+## 7. Verificación con Hacienda (sandbox)
+El 2026-10-02 se probó contra el **ambiente de pruebas real de Hacienda** con un
+certificado y credenciales de sandbox. **19 de 19 documentos aceptados**:
 
-Por verificar en stag: la forma de declarar las líneas no sujetas (se envía IVA
-en 0) y los impuestos específicos (el monto lo calcula el sistema de origen).
+| Documento | Resultado |
+|---|---|
+| Factura (servicio + mercancía, transferencia) | Aceptada |
+| Factura con descuento, línea exenta y línea no sujeta | Aceptada |
+| Factura en dólares (tipo de cambio automático) | Aceptada |
+| Factura a crédito (condición 10) + recibo electrónico de pago del 50 % | Aceptadas |
+| Factura sin internet (situación 3) | Aceptada (Hacienda advierte envío extemporáneo) |
+| Restaurante: servicio 10 % + pago mixto efectivo/tarjeta | Aceptada |
+| Tiquete (colones y dólares) | Aceptados |
+| Nota de débito y nota de crédito de anulación | Aceptadas |
+| Factura de compra (08) y de exportación (09) | Aceptadas |
+| Mensaje receptor: aceptación, aceptación parcial y rechazo | Aceptados |
+
+Reglas que aplica Hacienda y que el sistema ya valida o aplica:
+- **CABYS**: debe existir en el catálogo; el sistema lo verifica antes de firmar (`VALIDAR_CABYS`).
+- **Tarifas**: `10` cuenta como exenta; `01` y `11` cuentan siempre como **no sujetas**;
+  `05` (transitorio 0 %) solo en notas de crédito y débito; en exportación lo exento va con `10`.
+- **Factura de compra**: el proveedor debe tener identificación registrada en Hacienda y la
+  referencia debe indicar `numero` (consecutivo de 20 dígitos o clave de 50).
+- **Código de actividad**: se acepta tal como lo publica Hacienda (`7310.0`).
+- **Ubicación del emisor**: si provincia/cantón/distrito no coinciden con el domicilio
+  registrado en Hacienda, se acepta con la advertencia `-37`; registre la dirección real.
+
+Antes de producción: cargue las credenciales y el certificado de **producción** de cada
+empresa, cambie su ambiente a `prod` y emita un documento real de prueba.
 El resumen de IVA es un insumo y no reemplaza la revisión de la D-104.

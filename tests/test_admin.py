@@ -77,7 +77,9 @@ def test_advierte_si_el_certificado_es_de_otra_persona(admin):
     assert r.json()["advertencias"]
 
 
-def test_webhook_solo_https_y_devuelve_secreto(admin):
+def test_webhook_solo_https_y_devuelve_secreto(admin, monkeypatch):
+    from api.services import webhooks
+    monkeypatch.setattr(webhooks, "destino_permitido", lambda url: True)   # sin depender del DNS
     emisor_id = admin.post("/api/v1/emisores", json=EMISOR).json()["id"]
     assert admin.put(f"/api/v1/emisores/{emisor_id}/webhook", json={"url": "http://x.com/h"}).status_code == 422
     r = admin.put(f"/api/v1/emisores/{emisor_id}/webhook", json={"url": "https://erp.example.com/hook"})

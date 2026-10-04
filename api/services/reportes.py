@@ -181,12 +181,23 @@ def resumen_iva(db: Session, emisor: Emisor, anio: int, mes: int) -> dict:
     }
 
 
+def _celda_segura(valor):
+    """
+    Evita la inyección de fórmulas en Excel/LibreOffice: un texto que empiece
+    con = + - @ (p. ej. el nombre de un proveedor tomado de un XML externo)
+    se prefija con ' para que se muestre como texto y no se ejecute.
+    """
+    if isinstance(valor, str) and valor[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + valor
+    return valor
+
+
 def _csv(encabezados: list[str], filas) -> str:
     salida = io.StringIO()
     salida.write("﻿")  # BOM para que Excel reconozca UTF-8
     writer = csv.writer(salida, delimiter=";")
     writer.writerow(encabezados)
-    writer.writerows(filas)
+    writer.writerows([_celda_segura(v) for v in fila] for fila in filas)
     return salida.getvalue()
 
 

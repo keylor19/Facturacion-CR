@@ -37,6 +37,39 @@ function dialogoVender(e, planes, alTerminar) {
   ], { acciones: [vender] });
 }
 
+// Texto listo para entregar al cliente con todo lo que necesita su sistema para conectarse
+function datosConexion(e, llave) {
+  const base = `${window.location.origin}/api/v1`;
+  const texto = [
+    `Conexión a la API de facturación electrónica — ${e.nombre} (${e.numero_identificacion})`,
+    '',
+    `URL base:  ${base}`,
+    `API key:   ${llave}`,
+    'Header:    X-API-Key: <API key>',
+    `Ambiente:  ${e.ambiente === 'prod' ? 'Producción' : 'Pruebas (sandbox de Hacienda)'}`,
+    `Documentación interactiva: ${window.location.origin}/docs`,
+    '',
+    'Ejemplo (emitir una factura):',
+    `curl -X POST ${base}/facturas \\`,
+    `  -H "X-API-Key: ${llave}" -H "Content-Type: application/json" \\`,
+    '  -d \'{"tipo_documento":"01","referencia_externa":"VENTA-1",',
+    '       "receptor":{"nombre":"Cliente","tipo_identificacion":"01","numero_identificacion":"112345678"},',
+    '       "productos":[{"codigo_cabys":"8361100000000","descripcion":"Servicio","cantidad":"1",',
+    '                     "unidad_medida":"Sp","precio_unitario":"10000","codigo_tarifa_iva":"08"}],',
+    '       "medios_pago":[{"tipo":"04"}]}\'',
+    '',
+    'Saldo de documentos: GET /saldo (también viene en el header X-Documentos-Disponibles).',
+    'Guarde la API key como un secreto: no se puede volver a consultar.',
+  ].join('\n');
+  const copiar = h('button', { type: 'button', class: 'primario', onclick: async () => {
+    try { await navigator.clipboard.writeText(texto); toast('Copiado: envíelo al cliente por un canal seguro', 'ok'); } catch { toast('Seleccione el texto y cópielo manualmente', 'error'); }
+  } }, 'Copiar datos de conexión');
+  return h('div', { class: 'secreto' },
+    h('strong', {}, 'Llave creada. Copie ahora los datos de conexión: la llave no se volverá a mostrar.'),
+    h('pre', { class: 'mono bloque' }, texto),
+    copiar);
+}
+
 const CAMPOS = [
   ['nombre', 'Razón social / nombre', 'text', 100],
   ['nombre_comercial', 'Nombre comercial', 'text', 80],
@@ -180,7 +213,7 @@ export async function vistaDetalleEmpresa(cont, id) {
   const crearLlave = h('button', { type: 'button', onclick: () => conBoton(crearLlave, async () => {
     if (!nombreLlave.value.trim()) { toast('Indique un nombre para la llave', 'error'); return; }
     const r = await api('/api-keys', { method: 'POST', body: { nombre: nombreLlave.value.trim(), emisor_id: id }, conEmisor: false });
-    vaciar(nuevaLlave, h('div', { class: 'secreto' }, 'Copie la llave ahora, no se volverá a mostrar: ', h('span', { class: 'mono' }, r.api_key)));
+    vaciar(nuevaLlave, datosConexion(e, r.api_key));
     nombreLlave.value = '';
   }) }, 'Crear API key');
 

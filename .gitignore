@@ -21,3 +21,6 @@ xsd/*.xsd
 .idea/
 Thumbs.db
 .DS_Store
+
+# Respaldos y certificados
+respaldos/

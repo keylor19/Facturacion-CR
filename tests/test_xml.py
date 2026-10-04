@@ -190,7 +190,7 @@ def test_nota_credito_requiere_y_usa_referencia():
 def test_factura_de_compra_invierte_emisor_y_receptor():
     proveedor = {"nombre": "Proveedor informal", "tipo_identificacion": "01", "numero_identificacion": "206540321",
                  "ubicacion": {"provincia": "2", "canton": "01", "distrito": "01", "otras_senas": "Alajuela"}}
-    referencia = {"tipo_documento": "14", "fecha_emision": "2026-08-20T10:00:00", "codigo": "04",
+    referencia = {"tipo_documento": "14", "numero": "00100001010000000001", "fecha_emision": "2026-08-20T10:00:00", "codigo": "04",
                   "razon": "Compra a contribuyente de régimen especial"}
     with pytest.raises(ValidationError):
         FacturaRequest(**factura_payload(tipo_documento="08", receptor=None))
@@ -341,3 +341,39 @@ def test_contingencia_requiere_referencia_al_provisional():
         FacturaRequest(**factura_payload(situacion="3"))
     with pytest.raises(ValidationError, match="fecha_emision"):
         FacturaRequest(**factura_payload(fecha_emision="2026-09-20T10:00:00"))
+
+
+# --- Reglas verificadas contra el sandbox de Hacienda (2026-10-02) ------------
+
+@pytest.mark.parametrize("codigo", ["01", "11"])
+def test_tarifas_01_y_11_son_no_sujetas(codigo):
+    # Hacienda clasifica estas tarifas como NO SUJETAS aunque la línea no lo indique
+    root, _, t = _generar(productos=_una_linea(codigo_tarifa_iva=codigo, es_servicio=True))
+    assert t.serv_no_sujeto == Decimal("1000") and t.serv_gravados == 0
+    assert _d(root, "ResumenFactura/TotalNoSujeto") == Decimal("1000")
+
+
+def test_no_sujeto_usa_tarifa_01_por_defecto():
+    root, _, _ = _generar(productos=_una_linea(no_sujeto=True))
+    assert _texto(root, "DetalleServicio/LineaDetalle/Impuesto/CodigoTarifaIVA") == "01"
+
+
+def test_tarifa_05_solo_en_notas():
+    with pytest.raises(ValidationError, match="transitorio"):
+        FacturaRequest(**factura_payload(productos=_una_linea(codigo_tarifa_iva="05")))
+    FacturaRequest(**factura_payload(tipo_documento="03", productos=_una_linea(codigo_tarifa_iva="05"), referencia={
+        "tipo_documento": "01", "numero": "5" * 50, "fecha_emision": "2026-08-20T10:00:00", "codigo": "01", "razon": "x"}))
+
+
+def test_exportacion_exige_tarifa_10_para_exentos():
+    receptor = {"nombre": "ACME", "identificacion_extranjero": "US1"}
+    with pytest.raises(ValidationError, match="tarifa 10"):
+        FacturaRequest(**factura_payload(tipo_documento="09", receptor=receptor, moneda="USD", tipo_cambio="500",
+                                         productos=_una_linea(codigo_tarifa_iva="01", es_servicio=True)))
+
+
+def test_factura_de_compra_exige_numero_de_referencia():
+    proveedor = {"nombre": "ICE", "tipo_identificacion": "02", "numero_identificacion": "4000042139"}
+    with pytest.raises(ValidationError, match="numero"):
+        FacturaRequest(**factura_payload(tipo_documento="08", receptor=None, proveedor=proveedor, referencia={
+            "tipo_documento": "14", "fecha_emision": "2026-08-20T10:00:00", "codigo": "04"}))

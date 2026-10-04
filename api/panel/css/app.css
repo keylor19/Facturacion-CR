@@ -165,3 +165,6 @@ dl.datos dd { margin: 0; }
 .lineas input[maxlength="200"] { min-width: 220px; }
 .lineas input[type=number] { min-width: 90px; }
 .lineas select { min-width: 70px; }
+.bloque { white-space: pre-wrap; background: #fff; border: 1px solid var(--borde); border-radius: 6px; padding: 10px; margin: 8px 0; max-height: 360px; overflow: auto; }
+.qr { display: block; background: #fff; padding: 8px; border: 1px solid var(--borde); border-radius: 8px; margin: 8px 0; }
+[hidden] { display: none !important; }

@@ -13,8 +13,11 @@ import { vistaUsuarios } from './vistas/usuarios.js';
 import { vistaCuenta } from './vistas/cuenta.js';
 import { vistaSaldo } from './vistas/saldo.js';
 import { vistaPlanes } from './vistas/planes.js';
+import { vistaAuditoria } from './vistas/auditoria.js';
 
-export const contexto = { usuario: null, esAdmin: false, empresas: [], controlSaldo: false, saldoAlerta: 20 };
+export const contexto = {
+  usuario: null, esAdmin: false, empresas: [], controlSaldo: false, saldoAlerta: 20, debeActivar2fa: false,
+};
 
 const RUTAS = [
   [/^#\/tablero$/, vistaTablero, true],
@@ -30,6 +33,7 @@ const RUTAS = [
   [/^#\/cuenta$/, vistaCuenta, false],
   [/^#\/saldo$/, vistaSaldo, true],
   [/^#\/planes$/, vistaPlanes, false],
+  [/^#\/auditoria$/, vistaAuditoria, false],
 ];
 
 const MENU = [
@@ -41,7 +45,7 @@ const MENU = [
   ['#/saldo', 'Mi saldo'],
   ['#/consultas', 'Consultas Hacienda'],
 ];
-const MENU_ADMIN = [['#/empresas', 'Empresas'], ['#/planes', 'Planes y ventas'], ['#/usuarios', 'Usuarios']];
+const MENU_ADMIN = [['#/empresas', 'Empresas'], ['#/planes', 'Planes y ventas'], ['#/usuarios', 'Usuarios'], ['#/auditoria', 'Bitácora']];
 
 export async function cargarContexto() {
   const yo = await api('/auth/yo', { conEmisor: false });
@@ -50,6 +54,7 @@ export async function cargarContexto() {
   contexto.empresas = yo.empresas;
   contexto.controlSaldo = yo.control_saldo;
   contexto.saldoAlerta = yo.saldo_alerta;
+  contexto.debeActivar2fa = !!yo.debe_activar_2fa;
   if (!contexto.empresas.some((e) => e.id === sesion.emisorId)) {
     sesion.emisorId = contexto.empresas[0]?.id || null;
   }
@@ -118,6 +123,8 @@ export async function enrutar() {
   // Se recarga en cada navegación para que el saldo y las empresas estén al día
   try { await cargarContexto(); } catch { return; }
 
+  // Administrador sin verificación en dos pasos: solo puede entrar a Mi cuenta para activarla
+  if (contexto.debeActivar2fa && ruta !== '#/cuenta') { location.hash = '#/cuenta'; return; }
   const encontrada = RUTAS.find(([re]) => re.test(ruta));
   if (!encontrada) { location.hash = '#/tablero'; return; }
   const [re, vista, requiereEmpresa] = encontrada;

@@ -18,8 +18,16 @@ export async function vistaUsuarios(cont) {
       { titulo: 'Acceso', valor: (u) => (u.es_admin ? 'Administrador (todas las empresas)' : nombreEmpresa[u.emisor_id] || '—') },
       { titulo: 'Último ingreso', valor: (u) => fecha(u.ultimo_login) || 'Nunca' },
       { titulo: 'Estado', valor: (u) => (u.activo ? 'Activo' : h('span', { class: 'badge RECHAZADO' }, 'Inactivo')) },
+      { titulo: 'Dos pasos', valor: (u) => (u.dos_pasos ? h('span', { class: 'badge ACEPTADO' }, 'Activa')
+        : h('span', { class: `badge ${u.es_admin ? 'CONTINGENCIA' : ''}` }, 'No')) },
       { titulo: '', valor: (u) => h('div', { class: 'acciones' },
         h('button', { type: 'button', class: 'chico', onclick: () => dialogoPassword(u) }, 'Cambiar contraseña'),
+        u.dos_pasos && u.id !== contexto.usuario?.id ? h('button', { type: 'button', class: 'chico', onclick: (ev) => conBoton(ev.target, async () => {
+          if (!confirm(`¿Quitar la verificación en dos pasos de ${u.nombre}? Deberá configurarla de nuevo.`)) return;
+          await api(`/usuarios/${u.id}/2fa`, { method: 'DELETE', conEmisor: false });
+          toast('Verificación en dos pasos reiniciada', 'ok');
+          refrescar();
+        }) }, 'Reiniciar 2 pasos') : null,
         u.id === contexto.usuario?.id ? null : h('button', { type: 'button', class: `chico ${u.activo ? 'peligro' : ''}`, onclick: (ev) => conBoton(ev.target, async () => {
           await api(`/usuarios/${u.id}`, { method: 'PATCH', body: { activo: !u.activo }, conEmisor: false });
           refrescar();

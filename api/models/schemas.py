@@ -5,6 +5,7 @@ Esto es lo que tus clientes (frontend, POS, ERP, otros sistemas) van a consumir.
 ⚠️ Las tablas de códigos siguen los anexos v4.4; confirmalas contra la
 versión vigente publicada por Hacienda.
 """
+import re
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Literal, Optional
@@ -59,6 +60,9 @@ _LONGITUD_IDENTIFICACION = {
 }
 
 Cod2 = r"^\d{2}$"
+# Código de actividad económica (6 caracteres). Hacienda lo publica como "7310.0" (CAECR);
+# también se acepta el formato de 6 dígitos.
+PATRON_ACTIVIDAD = r"^(\d{6}|\d{4}\.\d)$"
 
 
 def validar_numero_identificacion(tipo: str, numero: str) -> str:
@@ -98,7 +102,7 @@ class PersonaRequest(BaseModel):
     telefono_codigo_pais: str = Field(default="506", pattern=r"^\d{1,3}$")
     telefono: Optional[str] = Field(default=None, pattern=r"^\d{8,20}$")
     correo: Optional[EmailStr] = None
-    codigo_actividad: Optional[str] = Field(default=None, pattern=r"^\d{6}$")
+    codigo_actividad: Optional[str] = Field(default=None, pattern=PATRON_ACTIVIDAD)
 
     @model_validator(mode="after")
     def validar_identificacion(self):
@@ -312,11 +316,11 @@ class FacturaRequest(BaseModel):
         description="ID del documento en tu sistema. Si se repite, se devuelve el comprobante ya creado (idempotencia).",
     )
     codigo_actividad_emisor: Optional[str] = Field(
-        default=None, pattern=r"^\d{6}$", description="Si el emisor tiene varias actividades; por defecto la registrada"
+        default=None, pattern=PATRON_ACTIVIDAD, description="Si el emisor tiene varias actividades; por defecto la registrada"
     )
     receptor: Optional[PersonaRequest] = None
     proveedor: Optional[PersonaRequest] = Field(default=None, description="Vendedor (solo factura de compra 08)")
-    codigo_actividad_receptor: Optional[str] = Field(default=None, pattern=r"^\d{6}$")
+    codigo_actividad_receptor: Optional[str] = Field(default=None, pattern=PATRON_ACTIVIDAD)
     productos: List[LineaRequest] = Field(min_length=1, max_length=1000)
     otros_cargos: List[OtroCargoRequest] = Field(default_factory=list, max_length=15)
     moneda: str = Field(default="CRC", pattern=r"^[A-Z]{3}$")
@@ -367,10 +371,23 @@ class FacturaRequest(BaseModel):
                     "La factura de compra (08) requiere 'referencia' (p. ej. tipo_documento 14 régimen especial "
                     "o 16 proveedor no domiciliado)"
                 )
+            # Hacienda exige Numero con estructura de consecutivo (20) o clave (50)
+            for ref in self.referencias:
+                if not ref.numero or not re.fullmatch(r"\d{20}|\d{50}", ref.numero):
+                    raise ValueError(
+                        "En la factura de compra la referencia debe indicar 'numero': consecutivo (20 dígitos) "
+                        "o clave (50 dígitos) del documento del proveedor"
+                    )
         elif self.proveedor is not None:
             raise ValueError("'proveedor' solo aplica a la factura de compra (08)")
         if t in ("02", "03") and not self.referencias:
             raise ValueError("Las notas de crédito/débito requieren 'referencia' al documento original")
+        # Reglas que aplica Hacienda (verificadas en el sandbox)
+        for i, p in enumerate(self.productos, start=1):
+            if p.tarifa_iva_principal == "05" and t not in ("02", "03"):
+                raise ValueError(f"Línea {i}: la tarifa 05 (transitorio 0%) solo se permite en notas de crédito y débito")
+            if t == "09" and p.tarifa_iva_principal in ("01", "05", "11"):
+                raise ValueError(f"Línea {i}: en la factura de exportación una línea sin IVA debe usar la tarifa 10 (exenta)")
         if t == "09":
             for i, p in enumerate(self.productos, start=1):
                 if not p.servicio and not p.partida_arancelaria:
@@ -462,7 +479,7 @@ class EventoResponse(BaseModel):
 class EmisorBase(BaseModel):
     nombre: str = Field(min_length=1, max_length=100)
     nombre_comercial: Optional[str] = Field(default=None, max_length=80)
-    codigo_actividad: str = Field(pattern=r"^\d{6}$")
+    codigo_actividad: str = Field(pattern=PATRON_ACTIVIDAD)
     correo: EmailStr
     telefono_codigo_pais: Optional[str] = Field(default="506", pattern=r"^\d{1,3}$")
     telefono: Optional[str] = Field(default=None, pattern=r"^\d{8,20}$")
@@ -492,7 +509,7 @@ class EmisorCrear(EmisorBase):
 class EmisorActualizar(BaseModel):
     nombre: Optional[str] = Field(default=None, min_length=1, max_length=100)
     nombre_comercial: Optional[str] = Field(default=None, max_length=80)
-    codigo_actividad: Optional[str] = Field(default=None, pattern=r"^\d{6}$")
+    codigo_actividad: Optional[str] = Field(default=None, pattern=PATRON_ACTIVIDAD)
     correo: Optional[EmailStr] = None
     telefono_codigo_pais: Optional[str] = Field(default=None, pattern=r"^\d{1,3}$")
     telefono: Optional[str] = Field(default=None, pattern=r"^\d{8,20}$")
@@ -567,7 +584,7 @@ class DocumentoRecibidoRequest(BaseModel):
 class MensajeReceptorRequest(BaseModel):
     mensaje: Literal["1", "2", "3"] = Field(description="1 Aceptado, 2 Aceptado parcialmente, 3 Rechazado")
     detalle_mensaje: Optional[str] = Field(default=None, max_length=160)
-    codigo_actividad: Optional[str] = Field(default=None, pattern=r"^\d{6}$")
+    codigo_actividad: Optional[str] = Field(default=None, pattern=PATRON_ACTIVIDAD)
     condicion_impuesto: Optional[str] = Field(
         default=None, pattern=Cod2,
         description="01 Crédito IVA general, 02 Crédito parcial, 03 Bienes de capital, 04 Gasto corriente sin crédito, 05 Proporcionalidad",
@@ -612,6 +629,7 @@ class DocumentoRecibidoResponse(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=200)
+    codigo: Optional[str] = Field(default=None, max_length=10, description="Código de la app autenticadora (si tiene 2FA)")
 
 
 class UsuarioResponse(BaseModel):
@@ -622,6 +640,16 @@ class UsuarioResponse(BaseModel):
     emisor_id: Optional[str]
     activo: bool
     ultimo_login: Optional[datetime]
+    dos_pasos: bool = False
+
+
+class CodigoRequest(BaseModel):
+    codigo: str = Field(min_length=6, max_length=10)
+
+
+class Desactivar2FARequest(BaseModel):
+    password: str = Field(min_length=1, max_length=200)
+    codigo: str = Field(min_length=6, max_length=10)
 
 
 class LoginResponse(BaseModel):

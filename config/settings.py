@@ -10,7 +10,7 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Endpoints oficiales de Hacienda por ambiente. "stag" usa un realm y un
@@ -66,6 +66,9 @@ class Settings(BaseSettings):
 
     # --- Validación XSD (muy recomendado) ---
     XSD_DIR: str = ""
+    # Verificar que cada código CABYS exista en el catálogo de Hacienda antes de firmar
+    # (consulta cacheada 24 h; si el servicio de Hacienda no responde, no se bloquea la emisión)
+    VALIDAR_CABYS: bool = True
 
     # --- Callback público (Hacienda debe poder alcanzar esta URL por HTTPS) ---
     CALLBACK_BASE_URL: str = "https://tu-dominio.com"
@@ -106,8 +109,12 @@ class Settings(BaseSettings):
     # --- Límites de uso (por llave / usuario) ---
     LIMITE_SOLICITUDES_MINUTO: int = 300
     LIMITE_LOGIN_MINUTO: int = 20          # por IP
+    LIMITE_FALLOS_AUTH_MINUTO: int = 30    # llaves/sesiones inválidas por IP
     # Publicar /docs (OpenAPI) también en producción para los integradores
     DOCS_PUBLICAS: bool = False
+    # Verificación en dos pasos obligatoria para administradores del panel.
+    # Sin definir: obligatoria en producción y opcional en pruebas.
+    EXIGIR_2FA_ADMIN: bool | None = None
 
     @property
     def api_keys(self) -> list[str]:
@@ -116,6 +123,15 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @field_validator("EXIGIR_2FA_ADMIN", mode="before")
+    @classmethod
+    def _vacio_es_por_defecto(cls, valor):
+        return None if isinstance(valor, str) and not valor.strip() else valor
+
+    @property
+    def exige_2fa_admin(self) -> bool:
+        return self.AMBIENTE == "prod" if self.EXIGIR_2FA_ADMIN is None else self.EXIGIR_2FA_ADMIN
 
     @property
     def smtp_configurado(self) -> bool:
@@ -130,6 +146,15 @@ class Settings(BaseSettings):
         errores = []
         if not self.MASTER_KEY:
             errores.append("MASTER_KEY es obligatorio")
+        else:
+            try:
+                from cryptography.fernet import Fernet
+                Fernet(self.MASTER_KEY.encode())
+            except (ValueError, TypeError):
+                errores.append("MASTER_KEY no es una clave válida (genérela con: python -m api.cli generar-master-key)")
+        clave_db = urlparse(self.DATABASE_URL).password or ""
+        if clave_db in ("", "facturacion", "cambia-esta-contrasena") or len(clave_db) < 16:
+            errores.append("La contraseña de la base de datos (DATABASE_URL) es débil o es la del ejemplo; use 16+ caracteres")
         if urlparse(self.CALLBACK_BASE_URL).scheme != "https" or "tu-dominio" in self.CALLBACK_BASE_URL:
             errores.append("CALLBACK_BASE_URL debe ser una URL https real")
         if len(self.CALLBACK_TOKEN) < 32:

@@ -9,7 +9,10 @@ El receptor debe validar la firma antes de confiar en el contenido.
 """
 import hashlib
 import hmac
+import ipaddress
 import json
+import socket
+from urllib.parse import urlparse
 
 import requests
 
@@ -18,6 +21,26 @@ from api.models.database import DocumentoRecibido, Factura
 
 class WebhookError(Exception):
     pass
+
+
+def destino_permitido(url: str) -> bool:
+    """
+    Solo HTTPS hacia direcciones públicas: impide que un webhook apunte a la red
+    interna del servidor (base de datos, Redis, metadatos de la nube…).
+    Se comprueba al configurarlo y en cada envío (contra cambios de DNS).
+    """
+    partes = urlparse(url)
+    if partes.scheme != "https" or not partes.hostname:
+        return False
+    try:
+        direcciones = {info[4][0] for info in socket.getaddrinfo(partes.hostname, partes.port or 443)}
+    except socket.gaierror:
+        return False
+    for direccion in direcciones:
+        ip = ipaddress.ip_address(direccion.split("%")[0])
+        if not ip.is_global or ip.is_multicast:
+            return False
+    return bool(direcciones)
 
 
 def firmar(cuerpo: bytes, secreto: str) -> str:
@@ -56,6 +79,8 @@ def payload_recibido(d: DocumentoRecibido, evento: str) -> dict:
 
 
 def enviar(url: str, secreto: str, payload: dict) -> None:
+    if not destino_permitido(url):
+        raise WebhookError("La URL del webhook no es una dirección pública HTTPS")
     cuerpo = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     headers = {
         "Content-Type": "application/json",

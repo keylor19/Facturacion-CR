@@ -2,18 +2,18 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from api.models.database import ApiKey, Emisor, get_db
+from api.models.database import ApiKey, Auditoria, Emisor, get_db
 from api.models.schemas import (
     ApiKeyCrear, ApiKeyResponse, CredencialesHaciendaRequest, EmisorActualizar, EmisorCrear,
     EmisorResponse, WebhookRequest,
 )
-from api.security import crear_api_key, require_admin
-from api.services import emisores, saldo
+from api.security import Principal, crear_api_key, require_admin
+from api.services import auditoria, emisores, saldo, webhooks
 from api.services.cifrado import CifradoError
 from api.services.firma import FirmaError, inspeccionar_certificado
 from api.services.hacienda_auth import HaciendaAuthError, obtener_token
@@ -43,7 +43,8 @@ def _key_respuesta(k: ApiKey, llave: str | None = None) -> ApiKeyResponse:
 # --- Emisores --------------------------------------------------------------
 
 @router.post("/emisores", response_model=EmisorResponse, status_code=201)
-def crear_emisor(payload: EmisorCrear, db: Session = Depends(get_db)):
+def crear_emisor(payload: EmisorCrear, request: Request,
+                 principal: Principal = Depends(require_admin), db: Session = Depends(get_db)):
     emisor = Emisor(**payload.model_dump())
     db.add(emisor)
     try:
@@ -51,6 +52,8 @@ def crear_emisor(payload: EmisorCrear, db: Session = Depends(get_db)):
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Ya existe un emisor con esa identificación")
+    auditoria.registrar(db, "emisor.crear", principal=principal, request=request, emisor_id=emisor.id,
+                        detalle=f"{emisor.nombre} ({emisor.numero_identificacion})")
     return emisores.a_respuesta(emisor)
 
 
@@ -70,11 +73,15 @@ def obtener_emisor(emisor_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.patch("/emisores/{emisor_id}", response_model=EmisorResponse)
-def actualizar_emisor(emisor_id: UUID, payload: EmisorActualizar, db: Session = Depends(get_db)):
+def actualizar_emisor(emisor_id: UUID, payload: EmisorActualizar, request: Request,
+                      principal: Principal = Depends(require_admin), db: Session = Depends(get_db)):
     emisor = _emisor(db, emisor_id)
-    for campo, valor in payload.model_dump(exclude_unset=True).items():
+    cambios = payload.model_dump(exclude_unset=True)
+    for campo, valor in cambios.items():
         setattr(emisor, campo, valor)
     db.commit()
+    auditoria.registrar(db, "emisor.actualizar", principal=principal, request=request, emisor_id=emisor.id,
+                        detalle=", ".join(sorted(cambios)) or "sin cambios")
     return emisores.a_respuesta(emisor)
 
 
@@ -83,6 +90,9 @@ def cargar_certificado(
     emisor_id: UUID,
     archivo: UploadFile = File(..., description="Certificado .p12 del emisor"),
     password: str = Form(..., description="PIN del certificado"),
+    *,
+    request: Request,
+    principal: Principal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """Carga (o reemplaza) el certificado digital. Se guarda cifrado."""
@@ -97,11 +107,14 @@ def cargar_certificado(
     except CifradoError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     db.commit()
+    auditoria.registrar(db, "emisor.certificado", principal=principal, request=request, emisor_id=emisor.id,
+                        detalle=f"vence {emisor.cert_vence:%Y-%m-%d}" if emisor.cert_vence else None)
     return {"ok": True, "sujeto": emisor.cert_sujeto, "vence": emisor.cert_vence, "advertencias": advertencias}
 
 
 @router.put("/emisores/{emisor_id}/credenciales-hacienda")
-def guardar_credenciales(emisor_id: UUID, payload: CredencialesHaciendaRequest, db: Session = Depends(get_db)):
+def guardar_credenciales(emisor_id: UUID, payload: CredencialesHaciendaRequest, request: Request,
+                         principal: Principal = Depends(require_admin), db: Session = Depends(get_db)):
     """Usuario y contraseña del API de comprobantes (ATV). Se guardan cifrados."""
     emisor = _emisor(db, emisor_id)
     try:
@@ -109,6 +122,8 @@ def guardar_credenciales(emisor_id: UUID, payload: CredencialesHaciendaRequest, 
     except CifradoError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     db.commit()
+    auditoria.registrar(db, "emisor.credenciales_hacienda", principal=principal, request=request,
+                        emisor_id=emisor.id)
     return {"ok": True}
 
 
@@ -134,7 +149,8 @@ def probar_conexion(emisor_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.put("/emisores/{emisor_id}/webhook")
-def configurar_webhook(emisor_id: UUID, payload: WebhookRequest, db: Session = Depends(get_db)):
+def configurar_webhook(emisor_id: UUID, payload: WebhookRequest, request: Request,
+                       principal: Principal = Depends(require_admin), db: Session = Depends(get_db)):
     """
     Configura la URL que recibe los cambios de estado. Devuelve el secreto
     para validar la firma HMAC (se muestra una sola vez).
@@ -143,15 +159,20 @@ def configurar_webhook(emisor_id: UUID, payload: WebhookRequest, db: Session = D
     url = str(payload.url) if payload.url else None
     if url and not url.startswith("https://"):
         raise HTTPException(status_code=422, detail="El webhook debe usar HTTPS")
+    if url and not webhooks.destino_permitido(url):
+        raise HTTPException(status_code=422, detail="El webhook debe apuntar a una dirección pública de internet")
     secreto = emisores.configurar_webhook(emisor, url)
     db.commit()
+    auditoria.registrar(db, "emisor.webhook", principal=principal, request=request, emisor_id=emisor.id,
+                        detalle=url or "eliminado")
     return {"ok": True, "webhook_url": url, "secreto": secreto}
 
 
 # --- API keys --------------------------------------------------------------
 
 @router.post("/api-keys", response_model=ApiKeyResponse, status_code=201)
-def crear_llave(payload: ApiKeyCrear, db: Session = Depends(get_db)):
+def crear_llave(payload: ApiKeyCrear, request: Request,
+                principal: Principal = Depends(require_admin), db: Session = Depends(get_db)):
     """Crea una llave. La llave completa solo se muestra en esta respuesta."""
     if payload.emisor_id:
         try:
@@ -159,6 +180,8 @@ def crear_llave(payload: ApiKeyCrear, db: Session = Depends(get_db)):
         except ValueError:
             raise HTTPException(status_code=422, detail="emisor_id inválido")
     registro, llave = crear_api_key(db, payload.nombre, payload.es_admin, payload.emisor_id)
+    auditoria.registrar(db, "llave.crear", principal=principal, request=request, emisor_id=registro.emisor_id,
+                        detalle=f"{registro.nombre} {registro.prefijo}… ({'admin' if registro.es_admin else 'empresa'})")
     return _key_respuesta(registro, llave)
 
 
@@ -171,9 +194,34 @@ def listar_llaves(emisor_id: UUID | None = None, db: Session = Depends(get_db)):
 
 
 @router.delete("/api-keys/{key_id}", status_code=204)
-def revocar_llave(key_id: UUID, db: Session = Depends(get_db)):
+def revocar_llave(key_id: UUID, request: Request,
+                  principal: Principal = Depends(require_admin), db: Session = Depends(get_db)):
     registro = db.get(ApiKey, str(key_id))
     if not registro:
         raise HTTPException(status_code=404, detail="Llave no encontrada")
     registro.activa = False
     db.commit()
+    auditoria.registrar(db, "llave.revocar", principal=principal, request=request, emisor_id=registro.emisor_id,
+                        detalle=f"{registro.nombre} {registro.prefijo}…")
+
+
+# --- Bitácora --------------------------------------------------------------
+
+@router.get("/admin/auditoria")
+def listar_auditoria(
+    emisor_id: UUID | None = None,
+    accion: str | None = Query(default=None, max_length=60, description="Prefijo, p. ej. 'llave.' o 'login'"),
+    limite: int = Query(default=200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+):
+    """Acciones sensibles más recientes: quién, qué, cuándo y desde qué IP."""
+    query = select(Auditoria).order_by(Auditoria.fecha.desc()).limit(limite)
+    if emisor_id:
+        query = query.where(Auditoria.emisor_id == str(emisor_id))
+    if accion:
+        query = query.where(Auditoria.accion.startswith(accion, autoescape=True))
+    return [
+        {"fecha": a.fecha, "actor": a.actor, "accion": a.accion, "emisor_id": a.emisor_id,
+         "detalle": a.detalle, "ip": a.ip}
+        for a in db.scalars(query)
+    ]

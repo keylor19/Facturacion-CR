@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 
-from fastapi import Depends, Header, HTTPException, Security, status
+from fastapi import Depends, Header, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -32,6 +32,8 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 _bearer = HTTPBearer(auto_error=False)
 
 PREFIJO_LLAVE = "fcr_"
+# Rutas permitidas a un administrador sin 2FA (para que pueda activarla)
+RUTAS_SIN_2FA = "/api/v1/auth/"
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,7 @@ class Principal:
     emisor_id: str | None
     api_key_id: str | None
     usuario_id: str | None = None
+    falta_2fa: bool = False     # administrador del panel que aún no activa la verificación en dos pasos
 
 
 def verificar_secreto(recibido: str | None, esperados: list[str]) -> bool:
@@ -75,11 +78,23 @@ def _no_autorizado():
 
 
 def autenticar(
+    request: Request,
     api_key: str | None = Security(_api_key_header),
     bearer: HTTPAuthorizationCredentials | None = Security(_bearer),
     db: Session = Depends(get_db),
 ) -> Principal:
-    principal = _identificar(api_key, bearer, db)
+    try:
+        principal = _identificar(api_key, bearer, db)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_401_UNAUTHORIZED:
+            # Frena a quien prueba llaves o sesiones en masa desde una misma IP
+            ip = request.client.host if request.client else "desconocida"
+            limites.aplicar(f"fallo-auth:{ip}", get_settings().LIMITE_FALLOS_AUTH_MINUTO)
+        raise
+    if principal.falta_2fa and not request.url.path.startswith(RUTAS_SIN_2FA):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Active la verificación en dos pasos (Mi cuenta) para usar el panel como administrador",
+                            headers={"X-Requiere-2FA": "activar"})
     # Límite de uso por llave / usuario
     quien = principal.api_key_id or principal.usuario_id or "admin-env"
     limites.aplicar(f"req:{quien}", get_settings().LIMITE_SOLICITUDES_MINUTO)
@@ -94,7 +109,8 @@ def _identificar(api_key: str | None, bearer: HTTPAuthorizationCredentials | Non
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión inválida o vencida",
                                 headers={"WWW-Authenticate": "Bearer"})
         return Principal(es_admin=usuario.es_admin, emisor_id=usuario.emisor_id, api_key_id=None,
-                         usuario_id=str(usuario.id))
+                         usuario_id=str(usuario.id),
+                         falta_2fa=usuario.es_admin and not usuario.totp_activo and get_settings().exige_2fa_admin)
 
     # 2) API key (sistemas integrados)
     if not api_key or len(api_key) > 200:

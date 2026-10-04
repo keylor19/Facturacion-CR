@@ -1,0 +1,20 @@
+# Servidor web público: HTTPS automático (Let's Encrypt) para el dominio del servicio.
+{$DOMINIO} {
+	encode gzip
+
+	# Límite de tamaño de las solicitudes (XML de proveedores, certificados)
+	request_body {
+		max_size 6MB
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+
+	reverse_proxy api:8000
+
+	log {
+		output stdout
+	}
+}

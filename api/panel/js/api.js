@@ -9,7 +9,7 @@ export const sesion = {
 };
 
 export class ApiError extends Error {
-  constructor(mensaje, status) { super(mensaje); this.status = status; }
+  constructor(mensaje, status, headers = null) { super(mensaje); this.status = status; this.headers = headers; }
 }
 
 function formatearDetalle(detalle) {
@@ -50,7 +50,11 @@ export async function api(ruta, { method = 'GET', body, form, raw = false, conEm
   if (!r.ok) {
     let detalle = r.statusText;
     try { detalle = formatearDetalle((await r.json()).detail); } catch { /* sin cuerpo JSON */ }
-    throw new ApiError(detalle || `Error ${r.status}`, r.status);
+    // Administrador sin verificación en dos pasos: debe activarla en Mi cuenta
+    if (r.status === 403 && r.headers.get('X-Requiere-2FA') === 'activar' && location.hash !== '#/cuenta') {
+      location.hash = '#/cuenta';
+    }
+    throw new ApiError(detalle || `Error ${r.status}`, r.status, r.headers);
   }
   if (raw) return r;
   if (r.status === 204) return null;
