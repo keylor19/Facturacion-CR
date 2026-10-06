@@ -63,6 +63,7 @@ Cod2 = r"^\d{2}$"
 # Código de actividad económica (6 caracteres). Hacienda lo publica como "7310.0" (CAECR);
 # también se acepta el formato de 6 dígitos.
 PATRON_ACTIVIDAD = r"^(\d{6}|\d{4}\.\d)$"
+PATRON_UUID = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 
 
 def validar_numero_identificacion(tipo: str, numero: str) -> str:
@@ -214,6 +215,9 @@ class LineaRequest(BaseModel):
     )
     impuesto_asumido_emisor: bool = Field(default=False, description="El emisor asume el impuesto (no se cobra al cliente)")
     no_sujeto: bool = Field(default=False, description="Bien o servicio no sujeto a IVA")
+    producto_id: Optional[str] = Field(
+        default=None, pattern=PATRON_UUID,
+        description="Producto del catálogo (/api/v1/catalogo/productos): si controla inventario, la venta lo descuenta")
 
     @field_validator("codigo_tarifa_iva")
     @classmethod
@@ -523,6 +527,10 @@ class EmisorActualizar(BaseModel):
                                                 description="Registro de bebidas alcohólicas (Ley 8707)")
     ambiente: Optional[Ambiente] = None
     activo: Optional[bool] = None
+    facturacion_web: Optional[bool] = Field(
+        default=None, description="Facturación en línea (emitir, catálogos e inventario) para los usuarios de la empresa")
+    acceso_api: Optional[bool] = Field(
+        default=None, description="Conexión por API: el sistema de facturación del cliente usa sus llaves")
 
 
 class EmisorResponse(EmisorBase):
@@ -537,6 +545,9 @@ class EmisorResponse(EmisorBase):
     cert_vence: Optional[datetime]
     webhook_url: Optional[str]
     saldo_documentos: Optional[int] = None
+    facturacion_web: bool = True
+    acceso_api: bool = True
+    tiene_logo: bool = False
 
 
 class CredencialesHaciendaRequest(BaseModel):
@@ -725,3 +736,113 @@ class AcreditarRequest(BaseModel):
         if not self.plan_id and not self.documentos:
             raise ValueError("Indique plan_id o la cantidad de documentos")
         return self
+
+
+# --------------------------------------------------------------------------
+# Facturación en línea: catálogo de clientes, productos e inventario
+# --------------------------------------------------------------------------
+
+class ClienteDatos(BaseModel):
+    tipo_identificacion: TipoIdentificacion
+    numero_identificacion: str = Field(min_length=1, max_length=20)
+    nombre: str = Field(min_length=1, max_length=100)
+    nombre_comercial: Optional[str] = Field(default=None, max_length=80)
+    correo: Optional[EmailStr] = None
+    telefono: Optional[str] = Field(default=None, pattern=r"^\d{8,20}$")
+    codigo_actividad: Optional[str] = Field(default=None, pattern=PATRON_ACTIVIDAD)
+    provincia: Optional[str] = Field(default=None, pattern=r"^[1-7]$")
+    canton: Optional[str] = Field(default=None, pattern=r"^\d{2}$")
+    distrito: Optional[str] = Field(default=None, pattern=r"^\d{2}$")
+    otras_senas: Optional[str] = Field(default=None, max_length=250)
+    notas: Optional[str] = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def validar(self):
+        self.numero_identificacion = validar_numero_identificacion(self.tipo_identificacion, self.numero_identificacion)
+        return self
+
+
+class ClienteResponse(ClienteDatos):
+    id: str
+    activo: bool
+
+
+class ProductoActualizar(BaseModel):
+    codigo: Optional[str] = Field(default=None, min_length=1, max_length=20)
+    codigo_cabys: Optional[str] = Field(default=None, pattern=r"^\d{13}$")
+    descripcion: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    unidad_medida: Optional[str] = Field(default=None, min_length=1, max_length=15)
+    es_servicio: Optional[bool] = None
+    precio_unitario: Optional[Decimal] = Field(default=None, ge=0, max_digits=18, decimal_places=5,
+                                               description="Precio sin IVA, en colones")
+    codigo_tarifa_iva: Optional[str] = None
+    costo_unitario: Optional[Decimal] = Field(default=None, ge=0, max_digits=18, decimal_places=5)
+    controla_inventario: Optional[bool] = None
+    existencia_minima: Optional[Decimal] = Field(default=None, ge=0, max_digits=18, decimal_places=3)
+    activo: Optional[bool] = None
+
+    @field_validator("codigo_tarifa_iva")
+    @classmethod
+    def tarifa_conocida(cls, v):
+        if v is not None and v not in TARIFAS_IVA:
+            raise ValueError(f"codigo_tarifa_iva inválido; valores válidos: {sorted(TARIFAS_IVA)}")
+        return v
+
+
+class ProductoCrear(ProductoActualizar):
+    codigo: str = Field(min_length=1, max_length=20)
+    codigo_cabys: str = Field(pattern=r"^\d{13}$")
+    descripcion: str = Field(min_length=1, max_length=200)
+    unidad_medida: str = Field(default="Unid", min_length=1, max_length=15)
+    precio_unitario: Decimal = Field(default=Decimal("0"), ge=0, max_digits=18, decimal_places=5)
+    codigo_tarifa_iva: str = "08"
+    existencia_inicial: Decimal = Field(default=Decimal("0"), ge=0, max_digits=18, decimal_places=3,
+                                        description="Solo si controla inventario")
+
+
+class ProductoResponse(BaseModel):
+    id: str
+    codigo: str
+    codigo_cabys: str
+    descripcion: str
+    unidad_medida: str
+    es_servicio: bool
+    precio_unitario: Decimal
+    codigo_tarifa_iva: str
+    costo_unitario: Optional[Decimal]
+    controla_inventario: bool
+    existencia: Decimal
+    existencia_minima: Optional[Decimal]
+    bajo_minimo: bool
+    activo: bool
+
+
+class MovimientoRequest(BaseModel):
+    producto_id: str = Field(pattern=PATRON_UUID)
+    tipo: Literal["entrada", "salida", "ajuste"] = Field(
+        description="entrada (compra, producción), salida (merma, consumo interno) o ajuste (conteo físico)")
+    cantidad: Decimal = Field(ge=0, max_digits=18, decimal_places=3,
+                              description="En 'ajuste' es la existencia contada; en los demás, la cantidad que entra o sale")
+    costo_unitario: Optional[Decimal] = Field(default=None, ge=0, max_digits=18, decimal_places=5,
+                                              description="En entradas: actualiza el costo del producto")
+    nota: Optional[str] = Field(default=None, max_length=300)
+
+    @model_validator(mode="after")
+    def validar(self):
+        if self.tipo != "ajuste" and self.cantidad <= 0:
+            raise ValueError("La cantidad debe ser mayor que cero")
+        return self
+
+
+# --------------------------------------------------------------------------
+# Alquiler de servicios (mensualidades)
+# --------------------------------------------------------------------------
+
+class SuscripcionRequest(BaseModel):
+    """Cobro del alquiler de un servicio por N meses (aparte de los documentos)."""
+    servicio: Literal["api", "facturacion_web"] = Field(description="api = conexión por API, facturacion_web = facturación en línea")
+    meses: int = Field(default=1, ge=1, le=36)
+    precio: Decimal = Field(ge=0, max_digits=18, decimal_places=2, description="Total cobrado por el período (0 = cortesía)")
+    moneda: Literal["CRC", "USD"] = "CRC"
+    referencia_pago: Optional[str] = Field(default=None, max_length=100, description="Comprobante SINPE, transferencia…")
+    notas: Optional[str] = Field(default=None, max_length=1000)

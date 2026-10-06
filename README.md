@@ -86,6 +86,7 @@ Límite de uso: `LIMITE_SOLICITUDES_MINUTO` por llave/usuario (429 + `Retry-Afte
 - [docs/despliegue.md](docs/despliegue.md): poner el servicio en línea (dominio, HTTPS, respaldos).
 - [docs/manual-administrador.md](docs/manual-administrador.md): alta de cada cliente, conexión con Hacienda y venta de documentos.
 - [docs/integracion.md](docs/integracion.md): guía para los programadores de los sistemas de sus clientes.
+- [docs/n8n.md](docs/n8n.md): conexión con n8n (autollenado mientras el agente escribe y emisión), con flujo listo para importar en [docs/n8n/](docs/n8n/).
 Para publicar la documentación interactiva en producción: `DOCS_PUBLICAS=true`.
 
 ## 3. Alta de una empresa (llave de administrador)
@@ -160,7 +161,7 @@ El IVA se prorratea por tarifa y se controla el saldo (`GET /facturas/{id}/pagos
 | `POST /api/v1/recepcion/{id}/mensaje` | Aceptar (1) / aceptar parcial (2) / rechazar (3) |
 | `GET /api/v1/reportes/resumen-iva?anio=&mes=` | Resumen de IVA del mes |
 | `GET /api/v1/reportes/ventas.csv` · `/compras.csv` | Libros para Excel |
-| `GET /api/v1/hacienda/contribuyentes/{id}` · `/exoneraciones/{aut}` · `/cabys?q=` · `/tipo-cambio/USD` | Consultas públicas |
+| `GET /api/v1/hacienda/contribuyentes/{id}` · `/exoneraciones/{aut}` · `/cabys?q=` · `/productores/{id}` · `/tipo-cambio` · `/tipo-cambio/USD/historico` | Consultas públicas (con caché y límite de 8 consultas/s hacia Hacienda) |
 | `GET /api/v1/hacienda/estado/{clave}` · `/comprobantes` · `/comprobantes/{clave}` | Consultas directas a Hacienda |
 | `POST/GET/PATCH /api/v1/emisores…` · `/api-keys` | Administración |
 | `GET /api/v1/health` · `/health/detalle` | Monitoreo (incluye vencimiento de certificados) |

@@ -14,6 +14,9 @@ import { vistaCuenta } from './vistas/cuenta.js';
 import { vistaSaldo } from './vistas/saldo.js';
 import { vistaPlanes } from './vistas/planes.js';
 import { vistaAuditoria } from './vistas/auditoria.js';
+import { vistaClientes } from './vistas/clientes.js';
+import { vistaProductos } from './vistas/productos.js';
+import { vistaInventario } from './vistas/inventario.js';
 
 export const contexto = {
   usuario: null, esAdmin: false, empresas: [], controlSaldo: false, saldoAlerta: 20, debeActivar2fa: false,
@@ -34,11 +37,19 @@ const RUTAS = [
   [/^#\/saldo$/, vistaSaldo, true],
   [/^#\/planes$/, vistaPlanes, false],
   [/^#\/auditoria$/, vistaAuditoria, false],
+  [/^#\/clientes$/, vistaClientes, true],
+  [/^#\/productos$/, vistaProductos, true],
+  [/^#\/inventario$/, vistaInventario, true],
 ];
 
+// Opciones del módulo de facturación en línea (se ocultan si la empresa no lo tiene)
+const MODULO_FACTURACION = new Set(['#/emitir', '#/clientes', '#/productos', '#/inventario']);
 const MENU = [
   ['#/tablero', 'Tablero'],
   ['#/emitir', 'Nuevo comprobante'],
+  ['#/clientes', 'Clientes'],
+  ['#/productos', 'Productos'],
+  ['#/inventario', 'Inventario'],
   ['#/comprobantes', 'Comprobantes'],
   ['#/recepcion', 'Facturas de proveedores'],
   ['#/reportes', 'Reportes'],
@@ -58,6 +69,11 @@ export async function cargarContexto() {
   if (!contexto.empresas.some((e) => e.id === sesion.emisorId)) {
     sesion.emisorId = contexto.empresas[0]?.id || null;
   }
+}
+
+function moduloDisponible(ruta) {
+  if (contexto.esAdmin || !MODULO_FACTURACION.has(ruta)) return true;
+  return empresaActual()?.facturacion_web !== false;
 }
 
 export function empresaActual() {
@@ -94,7 +110,7 @@ async function salir() {
 }
 
 function diseno(ruta) {
-  const menu = [...MENU, ...(contexto.esAdmin ? MENU_ADMIN : [])];
+  const menu = [...MENU.filter(([href]) => moduloDisponible(href)), ...(contexto.esAdmin ? MENU_ADMIN : [])];
   const contenido = h('main', { class: 'contenido' });
   const raiz = h('div', { class: 'layout' },
     h('aside', { class: 'lateral' },
@@ -131,6 +147,11 @@ export async function enrutar() {
   const { raiz, contenido } = diseno(ruta);
   vaciar(app, raiz);
 
+  if (!moduloDisponible(ruta)) {
+    vaciar(contenido, h('div', { class: 'aviso info' },
+      'La facturación en línea no está activa para esta empresa. Contacte a su proveedor para activarla.'));
+    return;
+  }
   if (requiereEmpresa && !empresaActual()) {
     vaciar(contenido, h('div', { class: 'aviso info' },
       contexto.esAdmin ? 'Registre primero una empresa en la sección Empresas.' : 'Su usuario no tiene una empresa asignada.'));

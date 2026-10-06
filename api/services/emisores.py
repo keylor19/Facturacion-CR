@@ -37,6 +37,9 @@ def a_respuesta(e: Emisor) -> EmisorResponse:
         cert_sujeto=e.cert_sujeto,
         cert_vence=e.cert_vence,
         webhook_url=e.webhook_url,
+        facturacion_web=e.facturacion_web is not False,
+        acceso_api=e.acceso_api is not False,
+        tiene_logo=e.logo is not None,
     )
 
 

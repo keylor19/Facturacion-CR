@@ -98,7 +98,30 @@ webhook (sección 6).
 | Recibo de pago (ventas a crédito 08/10) | `POST /facturas/{id}/recibo-pago` `{"monto": "58350"}` |
 | Enviar por correo | `POST /facturas/{id}/correo` |
 | Facturas de proveedores | `POST /recepcion` (XML en base64) · `POST /recepcion/{id}/mensaje` |
-| Consultas a Hacienda | `GET /hacienda/contribuyentes/{cedula}` · `/hacienda/cabys?q=` · `/hacienda/tipo-cambio/USD` |
+| Consultas a Hacienda | `GET /hacienda/contribuyentes/{cedula}` · `/hacienda/exoneraciones/{AL-XXXXXXXX-XX}` · `/hacienda/cabys?q=` · `/hacienda/productores/{cedula}` (MAG / INCOPESCA) · `/hacienda/tipo-cambio` · `/hacienda/tipo-cambio/USD/historico?desde=&hasta=` |
+| Logo de la empresa (sale en el PDF) | `PUT /empresa/logo` (PNG/JPEG, máx. 300 KB, campo `archivo`) · `DELETE /empresa/logo` |
+
+### Catálogo e inventario (opcional)
+Si su sistema no lleva inventario, puede usar el del servicio. Registre los
+productos y envíe `producto_id` en cada línea: la venta descuenta la
+existencia y, si no alcanza, la emisión se rechaza con `422`.
+
+| Operación | Endpoint |
+|---|---|
+| Productos | `GET/POST /catalogo/productos` (`?q=`, `?bajo_minimo=true`) · `PATCH/DELETE /catalogo/productos/{id}` |
+| Clientes | `GET/POST /catalogo/clientes` (`?q=`) · `PUT/DELETE /catalogo/clientes/{id}` |
+| Movimientos | `POST /inventario/movimientos` `{"producto_id": "...", "tipo": "entrada", "cantidad": "10", "costo_unitario": "3000"}` · `tipo`: `entrada`, `salida` o `ajuste` (la cantidad es la existencia contada) |
+| Kárdex y existencias | `GET /inventario/movimientos?producto_id=` · `GET /inventario/resumen` · `GET /inventario/existencias.csv` |
+
+```json
+{"codigo_cabys": "4299900000000", "descripcion": "Martillo de uña 16 oz", "cantidad": "3",
+ "precio_unitario": "5000", "codigo_tarifa_iva": "08", "producto_id": "<id del catálogo>"}
+```
+
+Las notas de crédito que anulan (`codigo` 01) o devuelven (06) regresan la
+mercadería; si Hacienda rechaza un comprobante, su movimiento se revierte solo.
+Los montos y cantidades del inventario se devuelven como texto (`"10.000"`)
+para no perder precisión.
 
 ### Sin internet o en contingencia
 Si su punto de venta estuvo sin conexión, envíe el comprobante cuando se

@@ -13,7 +13,7 @@ from api.models.schemas import (
     FacturaRequest, FacturaResponse, FacturaDetalleResponse, AnularRequest, CorreoRequest, EventoResponse,
     ReciboPagoRequest,
 )
-from api.security import emisor_actual
+from api.security import emisor_actual, emisor_facturacion_web
 from api.services import emision, saldo
 from api.services.fechas import zona_cr
 from api.services.pdf import generar_pdf
@@ -99,7 +99,7 @@ def _emitir(db, emisor, datos, response: Response, factura_origen_id=None) -> Fa
 @router.post("", response_model=FacturaResponse, status_code=202)
 def crear_factura(
     payload: FacturaRequest, response: Response,
-    emisor: Emisor = Depends(emisor_actual), db: Session = Depends(get_db),
+    emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db),
 ):
     return _emitir(db, emisor, payload, response)
 
@@ -177,7 +177,7 @@ def obtener_pdf(factura_id: UUID, emisor: Emisor = Depends(emisor_actual), db: S
 @router.post("/{factura_id}/anular", response_model=FacturaResponse, status_code=202)
 def anular_factura(
     factura_id: UUID, payload: AnularRequest, response: Response,
-    emisor: Emisor = Depends(emisor_actual), db: Session = Depends(get_db),
+    emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db),
 ):
     """Emite una nota de crédito que anula totalmente el comprobante."""
     original = _buscar(db, emisor, factura_id)
@@ -193,7 +193,7 @@ def anular_factura(
 @router.post("/{factura_id}/recibo-pago", response_model=FacturaResponse, status_code=202)
 def recibo_pago(
     factura_id: UUID, payload: ReciboPagoRequest, response: Response,
-    emisor: Emisor = Depends(emisor_actual), db: Session = Depends(get_db),
+    emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db),
 ):
     """
     Emite un Recibo Electrónico de Pago (10) por el pago total o parcial de una

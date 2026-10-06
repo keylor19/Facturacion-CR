@@ -7,10 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from api.models.database import Consumo, Emisor, Factura, Paquete, Plan, get_db
-from api.models.schemas import AcreditarRequest, PlanActualizar, PlanCrear, PlanResponse, TIPOS_COMPROBANTE
+from api.models.database import Consumo, Emisor, Factura, Paquete, Plan, Suscripcion, get_db
+from api.models.schemas import (
+    AcreditarRequest, PlanActualizar, PlanCrear, PlanResponse, SuscripcionRequest, TIPOS_COMPROBANTE,
+)
 from api.security import Principal, emisor_actual, require_admin
-from api.services import auditoria, saldo
+from api.services import auditoria, saldo, suscripciones
 from api.services.fechas import zona_cr
 from api.services.reportes import rango_mes
 
@@ -154,19 +156,74 @@ def anular_paquete(paquete_id: UUID, request: Request, principal: Principal = De
     return saldo.paquete_a_dict(paquete)
 
 
+# --- Administración: alquiler de servicios (mensualidades) ----------------------------
+
+@admin.get("/emisores/{emisor_id}/suscripciones")
+def suscripciones_emisor(emisor_id: UUID, _: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    emisor = _emisor(db, emisor_id)
+    historial = db.scalars(select(Suscripcion).where(Suscripcion.emisor_id == emisor.id)
+                           .order_by(Suscripcion.created_at.desc())).all()
+    return {
+        "control_activo": suscripciones.control_activo(),
+        "servicios": suscripciones.estados(db, emisor),
+        "historial": [suscripciones.a_dict(s) for s in historial],
+    }
+
+
+@admin.post("/emisores/{emisor_id}/suscripciones", status_code=201)
+def vender_suscripcion(emisor_id: UUID, payload: SuscripcionRequest, request: Request,
+                       principal: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+    """Registra el pago del alquiler de un servicio (SINPE, transferencia) por N meses."""
+    emisor = _emisor(db, emisor_id)
+    sus = suscripciones.vender(
+        db, emisor, payload.servicio, payload.meses, payload.precio, payload.moneda,
+        payload.referencia_pago, payload.notas, auditoria.nombre_actor(db, principal),
+    )
+    auditoria.registrar(db, "suscripcion.vender", principal=principal, request=request, emisor_id=emisor.id,
+                        detalle=f"{suscripciones.SERVICIOS[sus.servicio]}: {sus.meses} mes(es), {sus.precio} {sus.moneda}"
+                        + (f", pago {sus.referencia_pago}" if sus.referencia_pago else ""))
+    return {"suscripcion": suscripciones.a_dict(sus), "servicio": suscripciones.estado(db, emisor, sus.servicio)}
+
+
+@admin.post("/suscripciones/{suscripcion_id}/anular")
+def anular_suscripcion(suscripcion_id: UUID, request: Request, principal: Principal = Depends(require_admin),
+                       db: Session = Depends(get_db)):
+    """Anula un cobro (p. ej. pago revertido): el período deja de contar."""
+    sus = db.get(Suscripcion, str(suscripcion_id))
+    if sus is None:
+        raise HTTPException(status_code=404, detail="Suscripción no encontrada")
+    sus.anulada = True
+    db.commit()
+    auditoria.registrar(db, "suscripcion.anular", principal=principal, request=request, emisor_id=sus.emisor_id,
+                        detalle=f"{suscripciones.SERVICIOS.get(sus.servicio, sus.servicio)} {sus.id}")
+    return suscripciones.a_dict(sus)
+
+
 @admin.get("/admin/ventas")
 def ventas(anio: int = Query(ge=2020, le=2100), mes: int = Query(ge=1, le=12),
            _: Principal = Depends(require_admin), db: Session = Depends(get_db)):
-    """Paquetes vendidos en el mes (ingresos) y documentos consumidos por empresa."""
+    """Ingresos del mes (paquetes de documentos y alquiler de servicios) y consumo por empresa."""
     desde, hasta = rango_mes(anio, mes)
     vendidos = db.execute(
         select(Paquete, Emisor.nombre).join(Emisor, Emisor.id == Paquete.emisor_id)
         .where(Paquete.created_at >= desde, Paquete.created_at < hasta, Paquete.anulado.is_(False))
         .order_by(Paquete.created_at)
     ).all()
-    ingresos: dict[str, Decimal] = {}
-    for p, _nombre in vendidos:
-        ingresos[p.moneda] = ingresos.get(p.moneda, Decimal("0")) + p.precio
+    servicios = db.execute(
+        select(Suscripcion, Emisor.nombre).join(Emisor, Emisor.id == Suscripcion.emisor_id)
+        .where(Suscripcion.created_at >= desde, Suscripcion.created_at < hasta, Suscripcion.anulada.is_(False))
+        .order_by(Suscripcion.created_at)
+    ).all()
+
+    def sumar(montos) -> dict[str, Decimal]:
+        total: dict[str, Decimal] = {}
+        for moneda, precio in montos:
+            total[moneda] = total.get(moneda, Decimal("0")) + precio
+        return total
+
+    ingresos_documentos = sumar((p.moneda, p.precio) for p, _ in vendidos)
+    ingresos_servicios = sumar((s.moneda, s.precio) for s, _ in servicios)
+    ingresos = sumar([*ingresos_documentos.items(), *ingresos_servicios.items()])
 
     consumo = db.execute(
         select(Emisor.id, Emisor.nombre, func.count(Consumo.id))
@@ -179,7 +236,10 @@ def ventas(anio: int = Query(ge=2020, le=2100), mes: int = Query(ge=1, le=12),
     return {
         "periodo": f"{anio:04d}-{mes:02d}",
         "ingresos": {m: str(v) for m, v in ingresos.items()},
+        "ingresos_documentos": {m: str(v) for m, v in ingresos_documentos.items()},
+        "ingresos_servicios": {m: str(v) for m, v in ingresos_servicios.items()},
         "paquetes_vendidos": [{**saldo.paquete_a_dict(p), "empresa": nombre} for p, nombre in vendidos],
+        "servicios_vendidos": [{**suscripciones.a_dict(s), "empresa": nombre} for s, nombre in servicios],
         "consumo_por_empresa": [{"emisor_id": str(i), "empresa": n, "documentos": c} for i, n, c in consumo],
         "documentos_consumidos": sum(c for _, _, c in consumo),
         "comprobantes_emitidos": emitidos_mes,

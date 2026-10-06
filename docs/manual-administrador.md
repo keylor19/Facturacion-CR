@@ -87,7 +87,14 @@ proveedor. Los reintentos y reenvíos **no** consumen.
 
 Según cómo vaya a trabajar el cliente:
 
+Los dos servicios se cobran por separado de los documentos: se habilitan en
+*Datos de la empresa* (casillas **Conexión por API** y **Facturación en
+línea**) y se cobra su mensualidad en *Servicios alquilados* → **Cobrar**
+(1, 3, 6 o 12 meses). Sin mensualidad vigente el servicio no funciona.
+Plantillas de lo que se le envía al cliente: [entrega-cliente.md](entrega-cliente.md).
+
 ### a) Su sistema de facturación se conecta por API
+Requiere la casilla **Conexión por API** marcada.
 **Ficha de la empresa → Integración con otros sistemas → Nueva llave**
 (un nombre por sistema o sucursal, p. ej. "POS central") → **Crear API key**.
 
@@ -101,12 +108,41 @@ Opcional: **Webhook** → la URL de su sistema que recibirá avisos de
 aceptación, rechazo y saldo. Entréguele el secreto que aparece para que
 valide la firma.
 
-### b) Factura desde el panel web
-**Usuarios → + Nuevo usuario** → acceso "Solo <empresa>". El cliente
-ingresa a `https://<su-dominio>/panel/` y solo ve su empresa: emitir,
-consultar, facturas de proveedores, reportes y su saldo.
+### b) Factura desde el panel web (facturación en línea)
+Para clientes que **no tienen sistema propio**.
 
-Puede dar ambas cosas al mismo cliente.
+1. En la ficha de la empresa, deje marcada **"Facturación en línea"** (viene
+   activa). Si la vende como servicio adicional, desmárquela a quien no la
+   haya contratado: sus usuarios dejan de ver Nuevo comprobante, Clientes,
+   Productos e Inventario (pueden seguir consultando sus comprobantes y
+   reportes). No afecta a los sistemas conectados por API.
+2. Opcional: **Logo en las facturas** → cargue un PNG o JPEG (máx. 300 KB);
+   sale en el PDF de cada comprobante.
+3. **Usuarios → + Nuevo usuario** → acceso "Solo <empresa>". El cliente
+   ingresa a `https://<su-dominio>/panel/` y solo ve su empresa.
+
+Lo que tiene el cliente en el panel:
+
+| Sección | Para qué |
+|---|---|
+| **Clientes** | Sus clientes frecuentes. Al facturar, *Elegir cliente* llena todo; o marque *Guardar en mis clientes frecuentes* al emitir. |
+| **Productos** | Catálogo con CABYS, precio, unidad e IVA. Al facturar, *+ Del catálogo* agrega la línea con un clic. |
+| **Inventario** | Existencias, valor al costo, productos bajo el mínimo y los últimos movimientos. Descarga de existencias en CSV. |
+
+Cómo funciona el inventario (solo en productos con *Controlar inventario*):
+
+| Qué pasa | Efecto en la existencia |
+|---|---|
+| Factura, tiquete o factura de exportación | Se descuenta. Si no alcanza, el sistema **no emite** y avisa cuánto hay. |
+| Nota de crédito que anula o devuelve (también *Anular* un comprobante) | Se devuelve. Una nota de crédito por descuento no mueve mercadería. |
+| Factura electrónica de compra | Se suma. |
+| Hacienda **rechaza** el comprobante | Se revierte solo (movimiento "Reverso"). |
+| Compra a un proveedor, merma, conteo físico | Productos → **Movimiento**: entrada (con costo, calcula el costo promedio), salida o ajuste por conteo. |
+
+Cada movimiento queda en el **Kárdex** del producto: fecha, cantidad,
+existencia resultante, comprobante relacionado y usuario.
+
+Puede dar ambas cosas (API y panel) al mismo cliente.
 
 ## 6. Pasar a producción
 
@@ -129,6 +165,39 @@ cliente no tiene que cambiar nada.
 | Tablero (por empresa) | Comprobantes con error o rechazados |
 | Comprobantes → detalle | Motivo exacto de un rechazo de Hacienda y bitácora |
 | Bitácora | Quién creó empresas o llaves, cambió certificados o credenciales, vendió paquetes, y los inicios de sesión (con IP) |
+
+### Datos de Hacienda guardados
+
+Lo que se consulta a Hacienda (cédulas, exoneraciones, productores MAG/INCOPESCA,
+CABYS y tipo de cambio) queda guardado en el sistema y lo comparten todas las
+empresas. Se usa lo guardado y solo se vuelve a preguntar a Hacienda cuando tiene
+más de `DIAS_ACTUALIZAR_HACIENDA` días (15 por defecto). Una tarea diaria lo
+actualiza sola y precarga las cédulas de las empresas y de los clientes guardados.
+
+Si Hacienda está caída o limita las consultas, el sistema sigue trabajando con lo
+guardado y el panel muestra *"Hacienda no responde: se muestran los datos guardados
+el …"*. Para forzar una actualización:
+
+```bash
+docker compose run --rm api python -m api.cli actualizar-hacienda
+```
+
+**Catálogo CABYS:** el catálogo oficial completo (Excel del BCCR, ~20 500 códigos)
+se guarda en el sistema y las búsquedas se hacen ahí, sin consultar a Hacienda.
+**Se actualiza solo:** todos los días a las 3:00 a. m. el sistema revisa las noticias
+del BCCR y, si publicaron una versión nueva del catálogo (o cambió el archivo), la
+descarga e importa; además compara 30 códigos al azar con Hacienda y corrige los que
+hayan cambiado. Cada actualización queda en la **Bitácora** (filtro *Catálogo CABYS*).
+
+Solo si el BCCR cambiara la forma de publicarlo, se puede importar a mano:
+
+```bash
+docker compose run --rm api python -m api.cli cargar-cabys --url https://.../catalogo.xlsx
+```
+
+**Tipo de cambio:** cada día se guarda el tipo de cambio publicado (compra, venta
+y euro), formando un histórico propio. Las facturas con fecha atrasada
+(contingencia) usan el tipo de cambio de su fecha.
 
 ### Verificación en dos pasos
 

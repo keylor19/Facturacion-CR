@@ -9,7 +9,7 @@ import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Column, String, DateTime, Numeric, Integer, BigInteger, Text, ForeignKey, Enum,
+    Boolean, Column, String, Date, DateTime, Numeric, Integer, BigInteger, Text, ForeignKey, Enum,
     LargeBinary, PrimaryKeyConstraint, UniqueConstraint, create_engine, select,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB, insert as pg_insert
@@ -82,6 +82,14 @@ class Emisor(Base):
 
     webhook_url = Column(String(500), nullable=True)
     webhook_secret_cifrado = Column(LargeBinary, nullable=True)
+
+    # Módulo de facturación en línea (panel: emitir, catálogos e inventario) para
+    # los usuarios de la empresa. Se puede vender como servicio adicional.
+    facturacion_web = Column(Boolean, nullable=False, default=True, server_default="true")
+    # Conexión por API (el sistema de facturación del cliente se integra con llaves de API).
+    acceso_api = Column(Boolean, nullable=False, default=True, server_default="true")
+    logo = Column(LargeBinary, nullable=True)            # PNG o JPEG para el PDF
+    logo_tipo = Column(String(20), nullable=True)
 
     activo = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
@@ -379,6 +387,149 @@ class Consumo(Base):
     paquete = relationship("Paquete")
     factura = relationship("Factura")
     documento_recibido = relationship("DocumentoRecibido")
+
+
+class Suscripcion(Base):
+    """
+    Alquiler de un servicio por un período (mensualidad), aparte de los
+    documentos. servicio: "api" (conexión por API) o "facturacion_web".
+    """
+    __tablename__ = "suscripciones"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False, index=True)
+    servicio = Column(String(20), nullable=False)
+    desde = Column(DateTime(timezone=True), nullable=False)
+    hasta = Column(DateTime(timezone=True), nullable=False, index=True)
+    meses = Column(Integer, nullable=False)
+    precio = Column(Numeric(18, 2), nullable=False, default=0)
+    moneda = Column(String(3), nullable=False, default="CRC")
+    referencia_pago = Column(String(100), nullable=True)
+    notas = Column(Text, nullable=True)
+    anulada = Column(Boolean, nullable=False, default=False)
+    creado_por = Column(String(200), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class Cliente(Base):
+    """Cliente frecuente de una empresa (catálogo para no digitarlo en cada factura)."""
+    __tablename__ = "clientes"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False, index=True)
+    tipo_identificacion = Column(String(2), nullable=False)
+    numero_identificacion = Column(String(20), nullable=False)
+    nombre = Column(String(100), nullable=False)
+    nombre_comercial = Column(String(80), nullable=True)
+    correo = Column(String(160), nullable=True)
+    telefono = Column(String(20), nullable=True)
+    codigo_actividad = Column(String(6), nullable=True)
+    provincia = Column(String(1), nullable=True)
+    canton = Column(String(2), nullable=True)
+    distrito = Column(String(2), nullable=True)
+    otras_senas = Column(String(250), nullable=True)
+    notas = Column(Text, nullable=True)
+    activo = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (UniqueConstraint("emisor_id", "numero_identificacion", name="uq_cliente_emisor_identificacion"),)
+
+
+class Producto(Base):
+    """Producto o servicio del catálogo de una empresa, con control de inventario opcional."""
+    __tablename__ = "productos"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False, index=True)
+    codigo = Column(String(20), nullable=False)               # código interno (va como CodigoComercial)
+    codigo_cabys = Column(String(13), nullable=False)
+    descripcion = Column(String(200), nullable=False)
+    unidad_medida = Column(String(15), nullable=False, default="Unid")
+    es_servicio = Column(Boolean, nullable=False, default=False)
+    precio_unitario = Column(Numeric(18, 5), nullable=False, default=0)   # sin IVA, en colones
+    codigo_tarifa_iva = Column(String(2), nullable=False, default="08")
+    costo_unitario = Column(Numeric(18, 5), nullable=True)                # para valorar el inventario
+    controla_inventario = Column(Boolean, nullable=False, default=False)
+    existencia = Column(Numeric(18, 3), nullable=False, default=0)
+    existencia_minima = Column(Numeric(18, 3), nullable=True)
+    activo = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (UniqueConstraint("emisor_id", "codigo", name="uq_producto_emisor_codigo"),)
+
+
+class MovimientoInventario(Base):
+    """
+    Kárdex: cada cambio de existencia queda registrado. Las ventas, notas de
+    crédito y compras se generan solas al emitir; si Hacienda rechaza el
+    comprobante se agrega un movimiento de reverso.
+    """
+    __tablename__ = "movimientos_inventario"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False, index=True)
+    producto_id = Column(UUID(as_uuid=False), ForeignKey("productos.id", ondelete="CASCADE"), nullable=False, index=True)
+    fecha = Column(DateTime(timezone=True), default=utcnow, index=True)
+    # venta | devolucion | compra | reverso | entrada | salida | ajuste
+    tipo = Column(String(12), nullable=False)
+    cantidad = Column(Numeric(18, 3), nullable=False)          # positiva entra, negativa sale
+    existencia_resultante = Column(Numeric(18, 3), nullable=False)
+    costo_unitario = Column(Numeric(18, 5), nullable=True)
+    factura_id = Column(UUID(as_uuid=False), ForeignKey("facturas.id", ondelete="SET NULL"), nullable=True, index=True)
+    nota = Column(String(300), nullable=True)
+    usuario = Column(String(200), nullable=True)
+
+    producto = relationship("Producto")
+    factura = relationship("Factura")
+
+
+class RegistroHacienda(Base):
+    """
+    Datos públicos de Hacienda guardados localmente (compartidos por todas las
+    empresas): contribuyentes, exoneraciones, productores MAG/INCOPESCA, CABYS y
+    el último tipo de cambio. Se consultan primero aquí y se refrescan cada
+    DIAS_ACTUALIZAR_HACIENDA; si Hacienda no responde se usa lo guardado.
+    """
+    __tablename__ = "registros_hacienda"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    tipo = Column(String(20), nullable=False)          # ae, ex, agropecuario, pesca, cabys, tc
+    clave = Column(String(60), nullable=False)         # identificación, autorización, código...
+    ruta = Column(String(80), nullable=False)          # servicio de Hacienda (para refrescarlo)
+    parametros = Column(JSONB, nullable=False, default=dict)
+    encontrado = Column(Boolean, nullable=False, default=True)
+    datos = Column(JSONB, nullable=True)
+    actualizado_en = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    usado_en = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    __table_args__ = (UniqueConstraint("tipo", "clave", name="uq_registro_hacienda"),)
+
+
+class CodigoCabys(Base):
+    """Catálogo CABYS completo (archivo oficial del BCCR) para buscar sin consultar a Hacienda."""
+    __tablename__ = "cabys"
+
+    codigo = Column(String(13), primary_key=True)
+    descripcion = Column(Text, nullable=False)
+    impuesto = Column(Numeric(5, 2), nullable=False)       # % de IVA (13, 4, 2, 1, 0.5, 0)
+    categorias = Column(JSONB, nullable=False, default=list)
+    busqueda = Column(Text, nullable=False)                 # descripción en minúscula y sin tildes
+    busqueda_categorias = Column(Text, nullable=False)
+    actualizado_en = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class TipoCambioDiario(Base):
+    """Tipo de cambio publicado por Hacienda para cada día (histórico propio)."""
+    __tablename__ = "tipos_cambio"
+
+    fecha = Column(Date, primary_key=True)
+    usd_compra = Column(Numeric(12, 4), nullable=True)
+    usd_venta = Column(Numeric(12, 4), nullable=True)
+    eur_colones = Column(Numeric(12, 4), nullable=True)
+    eur_dolares = Column(Numeric(12, 6), nullable=True)
+    actualizado_en = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
 class ConsecutivoContador(Base):

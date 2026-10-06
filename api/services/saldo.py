@@ -18,6 +18,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from api.models.database import Consumo, DocumentoRecibido, Emisor, Factura, Paquete, Plan, utcnow
+from api.services import suscripciones
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -168,6 +169,9 @@ def resumen(db: Session, emisor: Emisor) -> dict:
         "por_vencer": sum(p.disponibles for p in paquetes
                           if not p.anulado and p.vence and ahora < p.vence <= alerta_venc),
         "paquetes": [paquete_a_dict(p) for p in paquetes],
+        # Servicios alquilados (API / facturación en línea) y su vencimiento
+        "control_suscripciones": suscripciones.control_activo(),
+        "servicios": suscripciones.estados(db, emisor),
     }
 
 

@@ -23,10 +23,12 @@ function formatearDetalle(detalle) {
   return typeof detalle === 'string' ? detalle : JSON.stringify(detalle);
 }
 
-export async function api(ruta, { method = 'GET', body, form, raw = false, conEmisor = true, redirigir401 = true } = {}) {
+export async function api(ruta, { method = 'GET', body, form, raw = false, conEmisor = true, redirigir401 = true, emisor = null } = {}) {
   const headers = {};
   if (sesion.token) headers.Authorization = `Bearer ${sesion.token}`;
-  if (conEmisor && sesion.emisorId) headers['X-Emisor-Id'] = sesion.emisorId;
+  // emisor: operar sobre una empresa distinta de la seleccionada (pantallas de administración)
+  if (emisor) headers['X-Emisor-Id'] = emisor;
+  else if (conEmisor && sesion.emisorId) headers['X-Emisor-Id'] = sesion.emisorId;
   let cuerpo;
   if (form) {
     cuerpo = form;

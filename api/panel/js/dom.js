@@ -134,6 +134,56 @@ export async function conBoton(boton, accion) {
   }
 }
 
+// Llama a consultar(cedula, vigente) cuando la identificación queda completa según
+// el tipo (o al salir del campo), una vez por número. vigente() indica si el número
+// sigue siendo el mismo al llegar la respuesta. Devuelve la función para forzar la consulta.
+const LONGITUD_ID = { '01': [9, 10, 11, 12], '02': [10], '03': [11, 12], '04': [10] };
+export function alCompletarCedula(numero, tipo, consultar) {
+  let ultima = '';
+  let espera;
+  const actual = () => numero.value.replace(/\D/g, '');
+  const lanzar = async (forzar = false) => {
+    const cedula = actual();
+    if (cedula.length < 9 || (!forzar && cedula === ultima)) return;
+    ultima = cedula;
+    try {
+      await consultar(cedula, () => cedula === actual());
+    } catch (e) {
+      ultima = '';
+      toast(e.message, 'error');
+    }
+  };
+  numero.addEventListener('input', () => {
+    clearTimeout(espera);
+    if ((LONGITUD_ID[tipo.value] || [9, 10, 11, 12]).includes(actual().length)) espera = setTimeout(lanzar, 500);
+  });
+  numero.addEventListener('change', () => { clearTimeout(espera); lanzar(); });
+  tipo.addEventListener('change', () => lanzar());
+  return () => lanzar(true);
+}
+
+// Hacienda no respondió y se usaron los datos guardados en el sistema.
+export function avisoRespaldo(datos) {
+  const r = datos && datos._respaldo_local;
+  if (!r) return null;
+  return aviso(`Hacienda no responde en este momento: se muestran los datos guardados${r.actualizado_en ? ` el ${fecha(r.actualizado_en)}` : ' en el sistema'}.`, 'alerta');
+}
+
+// Aviso con el estado del contribuyente en Hacienda (inscrito, moroso, omiso).
+export function avisoContribuyente(c, activas) {
+  const s = c.situacion || {};
+  const inscrito = (s.estado || '').toLowerCase() === 'inscrito';
+  return [
+    avisoRespaldo(c),
+    inscrito
+      ? aviso(`INSCRITO · ${c.nombre} · ${c.regimen?.descripcion || ''} · ${activas.length} actividad(es) activa(s)`, 'ok')
+      : aviso(`NO INSCRITO como contribuyente (estado en Hacienda: ${s.estado || 'desconocido'}).`, 'error'),
+    s.moroso === 'SI' || s.omiso === 'SI' ? aviso('Tiene obligaciones pendientes con Hacienda (moroso u omiso).', 'alerta') : null,
+  ];
+}
+
+export const avisoNoInscrito = (cedula) => aviso(`NO INSCRITO: la identificación ${cedula} no aparece registrada en Hacienda.`, 'error');
+
 export function campo(etiqueta, control) {
   return h('label', {}, etiqueta, control);
 }

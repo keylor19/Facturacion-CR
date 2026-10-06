@@ -14,7 +14,7 @@ from api.models.database import (
     Emisor, Factura, FacturaDetalle, EstadoFactura, siguiente_consecutivo,
 )
 from api.models.schemas import FacturaRequest, ReciboPagoRequest, ReferenciaRequest, TIPOS_COMPROBANTE
-from api.services import emisores, hacienda_publico, saldo
+from api.services import emisores, hacienda_publico, inventario, saldo
 from api.services.cifrado import CifradoError
 from api.services.clave_generator import generar_clave, consecutivo_desde_clave
 from api.services.fechas import ahora_cr, a_iso_cr, zona_cr
@@ -125,14 +125,22 @@ def emitir(
         if inexistentes:
             raise EmisionError(422, "Código(s) CABYS que no existen en el catálogo de Hacienda: "
                                     + ", ".join(inexistentes) + ". Búsquelos en /api/v1/hacienda/cabys?q=")
+        no_aplicables = hacienda_publico.exoneraciones_no_aplicables(datos.productos)
+        if no_aplicables:
+            raise EmisionError(422, "Exoneración no aplicable: " + "; ".join(no_aplicables)
+                                    + ". Quite la exoneración de esas líneas o use una que las contemple.")
+
+    fecha_emision = _fecha_emision(datos)
 
     if datos.moneda != "CRC" and datos.tipo_cambio is None:
         try:
-            datos.tipo_cambio = hacienda_publico.tipo_cambio(datos.moneda)
+            # Venta de un día anterior (contingencia): el tipo de cambio de ese día
+            if fecha_emision.date() < ahora_cr().date():
+                datos.tipo_cambio = hacienda_publico.tipo_cambio_en_fecha(datos.moneda, fecha_emision.date())
+            else:
+                datos.tipo_cambio = hacienda_publico.tipo_cambio(datos.moneda)
         except hacienda_publico.HaciendaPublicoError as exc:
             raise EmisionError(422, f"No se pudo obtener el tipo de cambio ({exc}); indique tipo_cambio")
-
-    fecha_emision = _fecha_emision(datos)
     persona = emisores.persona_emisor(emisor)
 
     try:
@@ -230,6 +238,11 @@ def emitir(
         for ln in lineas
     ]
     db.add(factura)
+    try:
+        inventario.aplicar_documento(db, emisor.id, factura, datos)
+    except inventario.InventarioError as exc:
+        db.rollback()
+        raise EmisionError(422, str(exc))
     restante = cobrar_documento(db, emisor, clave, datos.tipo_documento, factura=factura)
 
     try:

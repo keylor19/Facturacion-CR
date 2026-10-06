@@ -8,7 +8,8 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import Image, SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from xml.sax.saxutils import escape
 
 from api.models.database import Factura
@@ -46,6 +47,21 @@ def _qr(texto: str, tamano: float = 30 * mm) -> Drawing:
     return d
 
 
+def _logo(emisor, max_ancho: float = 45 * mm, max_alto: float = 20 * mm):
+    """Logo de la empresa escalado sin deformarlo; None si no tiene o no se puede leer."""
+    if not emisor.logo:
+        return None
+    try:
+        lector = ImageReader(BytesIO(bytes(emisor.logo)))
+        ancho, alto = lector.getSize()
+        escala = min(max_ancho / ancho, max_alto / alto)
+        imagen = Image(BytesIO(bytes(emisor.logo)), width=ancho * escala, height=alto * escala)
+        imagen.hAlign = "LEFT"
+        return imagen
+    except Exception:
+        return None
+
+
 def generar_pdf(factura: Factura) -> bytes:
     emisor = factura.emisor
     datos = factura.json_original or {}
@@ -77,6 +93,9 @@ def generar_pdf(factura: Factura) -> bytes:
         Paragraph(f"<b>Consecutivo:</b> {factura.numero_consecutivo}", ParagraphStyle("r", parent=normal, alignment=2)),
         Paragraph(f"<b>Fecha:</b> {fecha_local:%d/%m/%Y %H:%M}", ParagraphStyle("r2", parent=normal, alignment=2)),
     ]
+    logo = _logo(emisor)
+    if logo is not None:
+        emisor_txt = [logo, Spacer(0, 2 * mm), *emisor_txt]
     encabezado = Table([[emisor_txt, doc_txt]], colWidths=[100 * mm, 86 * mm])
     encabezado.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
     partes += [encabezado, Spacer(0, 4 * mm)]

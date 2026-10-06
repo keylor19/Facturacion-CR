@@ -1,8 +1,8 @@
 import { api, sesion } from '../api.js';
-import { h, vaciar, fecha, tabla, modal, conBoton, toast, campo, opciones, aviso } from '../dom.js';
+import { h, vaciar, fecha, tabla, modal, conBoton, toast, campo, opciones, aviso, dinero, alCompletarCedula, avisoContribuyente, avisoNoInscrito } from '../dom.js';
 import { TIPOS_IDENTIFICACION } from '../catalogos.js';
 import { contexto, cargarContexto, enrutar } from '../app.js';
-import { kpisSaldo, tablaPaquetes } from './saldo.js';
+import { kpisSaldo, tablaPaquetes, tablaServicios } from './saldo.js';
 
 function dialogoVender(e, planes, alTerminar) {
   const plan = h('select', {}, h('option', { value: '' }, 'Cantidad libre (cortesía o precio especial)'),
@@ -79,11 +79,23 @@ const CAMPOS = [
   ['provincia', 'Provincia (1-7)', 'text', 1],
   ['canton', 'Cantón (2 dígitos)', 'text', 2],
   ['distrito', 'Distrito (2 dígitos)', 'text', 2],
-  ['barrio', 'Barrio', 'text', 50],
+  ['barrio', 'Barrio', 'text', 50, true],
   ['otras_senas', 'Otras señas', 'text', 250],
-  ['proveedor_sistemas', 'Proveedor de sistemas (identificación)', 'text', 12],
-  ['registro_fiscal_8707', 'Registro fiscal bebidas alcohólicas (Ley 8707)', 'text', 12],
+  ['proveedor_sistemas', 'Proveedor de sistemas (vacío = la misma empresa)', 'text', 12, true],
+  ['registro_fiscal_8707', 'Registro fiscal Ley 8707 (solo si vende bebidas alcohólicas)', 'text', 12, true],
 ];
+
+// Campos obligatorios a la vista; los que solo aplican a algunas empresas, plegados
+// (se abren solos si ya tienen valor).
+function camposEmpresa(entradas) {
+  const opcionales = CAMPOS.filter((c) => c[4]);
+  return [
+    h('div', { class: 'campos' }, CAMPOS.filter((c) => !c[4]).map(([k, etiqueta]) => campo(etiqueta, entradas[k]))),
+    h('details', { open: opcionales.some(([k]) => entradas[k].value) },
+      h('summary', {}, 'Datos opcionales (solo si aplican)'),
+      h('div', { class: 'campos' }, opcionales.map(([k, etiqueta]) => campo(etiqueta, entradas[k])))),
+  ];
+}
 
 function sinPermiso(cont) {
   vaciar(cont, aviso('Esta sección es solo para administradores.', 'alerta'));
@@ -113,13 +125,31 @@ function dialogoNueva() {
   const entradas = Object.fromEntries(CAMPOS.map(([k, , t, max]) => [k, h('input', { type: t, maxlength: String(max) })]));
   const ambiente = h('select', {}, h('option', { value: 'stag' }, 'Pruebas (stag)'), h('option', { value: 'prod' }, 'Producción'));
 
-  const autocompletar = h('button', { type: 'button', onclick: () => conBoton(autocompletar, async () => {
-    const c = await api(`/hacienda/contribuyentes/${numero.value.replace(/\D/g, '')}`, { conEmisor: false });
+  // Al escribir la identificación se consultan los datos en Hacienda y se precargan.
+  const estadoHacienda = h('div');
+  const listaActividades = h('datalist', { id: 'actividades-nueva-empresa' });
+  entradas.codigo_actividad.setAttribute('list', listaActividades.id);
+
+  const consultar = alCompletarCedula(numero, tipo, async (cedula, vigente) => {
+    vaciar(estadoHacienda, h('p', { class: 'suave' }, 'Consultando Hacienda…'));
+    let c;
+    try {
+      c = await api(`/hacienda/contribuyentes/${cedula}`, { conEmisor: false });
+    } catch (e) {
+      if (vigente()) vaciar(estadoHacienda, e.status === 404 ? avisoNoInscrito(cedula) : aviso(e.message, 'error'));
+      return;
+    }
+    if (!vigente()) return;
     entradas.nombre.value = c.nombre || '';
     if (c.tipoIdentificacion) tipo.value = c.tipoIdentificacion;
-    const principal = (c.actividades || []).find((a) => a.tipo === 'P' && a.estado === 'A') || c.actividades?.[0];
-    if (principal) entradas.codigo_actividad.value = String(principal.codigo).padStart(6, '0');
-  }) }, 'Datos de Hacienda');
+    const activas = (c.actividades || []).filter((a) => a.estado === 'A' || !a.estado);
+    vaciar(listaActividades, activas.map((a) => h('option', { value: String(a.codigo).padStart(6, '0') }, a.descripcion)));
+    const principal = activas.find((a) => a.tipo === 'P') || activas[0];
+    entradas.codigo_actividad.value = principal ? String(principal.codigo).padStart(6, '0') : '';
+    vaciar(estadoHacienda, avisoContribuyente(c, activas),
+      activas.length > 1 ? h('p', { class: 'suave' }, 'Tiene varias actividades: puede elegir otra en "Código de actividad".') : null);
+  });
+  const autocompletar = h('button', { type: 'button', onclick: () => conBoton(autocompletar, consultar) }, 'Volver a consultar');
 
   const guardar = h('button', { type: 'button', class: 'primario', onclick: () => conBoton(guardar, async () => {
     const cuerpo = { tipo_identificacion: tipo.value, numero_identificacion: numero.value.replace(/\D/g, ''), ambiente: ambiente.value };
@@ -135,17 +165,100 @@ function dialogoNueva() {
   const m = modal('Nueva empresa', [
     h('div', { class: 'campos' }, campo('Tipo', tipo), h('div', { class: 'fila' }, campo('Identificación', numero), autocompletar),
       campo('Ambiente de Hacienda', ambiente)),
-    h('div', { class: 'campos' }, CAMPOS.map(([k, etiqueta]) => campo(etiqueta, entradas[k]))),
+    estadoHacienda, listaActividades,
+    camposEmpresa(entradas),
   ], { acciones: [guardar], ancho: true });
+}
+
+const ESTADO_COBRO = { VIGENTE: 'ACEPTADO', PROGRAMADA: 'PENDIENTE', VENCIDA: 'CONTINGENCIA', ANULADA: 'RECHAZADO' };
+
+function dialogoCobrarServicio(e, servicio, alTerminar) {
+  const meses = h('select', {}, [[1, '1 mes'], [3, '3 meses'], [6, '6 meses'], [12, '12 meses (anual)']]
+    .map(([v, t]) => h('option', { value: String(v) }, t)));
+  const precio = h('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Total del período (0 = cortesía)' });
+  const moneda = h('select', {}, ['CRC', 'USD'].map((m) => h('option', { value: m }, m)));
+  const referencia = h('input', { type: 'text', maxlength: '100', placeholder: 'Comprobante SINPE o transferencia' });
+  const notas = h('input', { type: 'text', maxlength: '1000' });
+  const vence = servicio.vence ? new Date(servicio.vence) : null;
+  const cobrar = h('button', { type: 'button', class: 'primario', onclick: () => conBoton(cobrar, async () => {
+    if (precio.value === '') { toast('Indique el precio cobrado', 'error'); return; }
+    const r = await api(`/emisores/${e.id}/suscripciones`, {
+      method: 'POST', conEmisor: false,
+      body: { servicio: servicio.servicio, meses: Number(meses.value), precio: precio.value, moneda: moneda.value,
+        referencia_pago: referencia.value.trim() || null, notas: notas.value.trim() || null },
+    });
+    m.cerrar();
+    toast(`${servicio.nombre}: pagado hasta ${fecha(r.servicio.vence, false)}`, 'ok');
+    alTerminar();
+  }) }, 'Registrar pago');
+  const m = modal(`Cobrar ${servicio.nombre} · ${e.nombre}`, [
+    vence && vence > new Date()
+      ? aviso(`Está pagado hasta ${fecha(servicio.vence, false)}: el nuevo período empieza ese día.`, 'info') : null,
+    h('div', { class: 'campos' }, campo('Período', meses), campo('Precio cobrado', precio), campo('Moneda', moneda),
+      campo('Referencia del pago', referencia), campo('Notas', notas)),
+  ], { acciones: [cobrar] });
+}
+
+function seccionServicios(e, datos, alCambiar) {
+  if (!datos.control_activo) return null;
+  const anular = (s) => (['VIGENTE', 'PROGRAMADA'].includes(s.estado) ? h('button', { type: 'button', class: 'chico peligro', onclick: (ev) => conBoton(ev.target, async () => {
+    if (!window.confirm(`¿Anular el cobro de ${s.nombre} (${s.meses} mes/es)? El período deja de contar.`)) return;
+    await api(`/suscripciones/${s.id}/anular`, { method: 'POST', conEmisor: false });
+    toast('Cobro anulado', 'ok');
+    alCambiar();
+  }) }, 'Anular') : null);
+  return h('section', { class: 'tarjeta' },
+    h('h2', {}, 'Servicios alquilados (mensualidad)'),
+    h('p', { class: 'suave' }, 'Se cobran aparte de los documentos. Cada servicio funciona con su casilla habilitada en "Datos de la empresa" y el pago al día.'),
+    tablaServicios(datos.servicios, (s) => h('button', { type: 'button', class: 'chico primario', onclick: () => dialogoCobrarServicio(e, s, alCambiar) },
+      s.vence ? 'Renovar' : 'Cobrar')),
+    datos.historial.length ? h('h3', {}, 'Historial de cobros') : null,
+    datos.historial.length ? tabla([
+      { titulo: 'Fecha', valor: (s) => fecha(s.fecha, false) },
+      { titulo: 'Servicio', valor: (s) => s.nombre },
+      { titulo: 'Período', valor: (s) => `${fecha(s.desde, false)} – ${fecha(s.hasta, false)}` },
+      { titulo: 'Precio', num: true, valor: (s) => dinero(s.precio, s.moneda) },
+      { titulo: 'Pago', valor: (s) => s.referencia_pago || '—' },
+      { titulo: 'Estado', valor: (s) => h('span', { class: `badge ${ESTADO_COBRO[s.estado]}` }, s.estado) },
+      { titulo: '', valor: anular },
+    ], datos.historial) : null);
+}
+
+function seccionLogo(id, tieneLogo, alCambiar) {
+  const vista = h('div');
+  if (tieneLogo) {
+    api('/empresa/logo', { raw: true, emisor: id })
+      .then((r) => r.blob())
+      .then((b) => vaciar(vista, h('img', { src: URL.createObjectURL(b), alt: 'Logo actual', class: 'logo-empresa' })))
+      .catch(() => {});
+  }
+  const archivo = h('input', { type: 'file', accept: 'image/png,image/jpeg' });
+  const subir = h('button', { type: 'button', class: 'primario', onclick: () => conBoton(subir, async () => {
+    if (!archivo.files[0]) { toast('Seleccione una imagen PNG o JPEG', 'error'); return; }
+    const form = new FormData();
+    form.append('archivo', archivo.files[0]);
+    await api('/empresa/logo', { method: 'PUT', form, emisor: id });
+    toast('Logo actualizado: aparecerá en los PDF', 'ok');
+    alCambiar();
+  }) }, 'Cargar logo');
+  const quitar = tieneLogo ? h('button', { type: 'button', class: 'peligro', onclick: () => conBoton(quitar, async () => {
+    await api('/empresa/logo', { method: 'DELETE', emisor: id });
+    toast('Logo eliminado', 'ok');
+    alCambiar();
+  }) }, 'Quitar logo') : null;
+  return h('section', { class: 'tarjeta' }, h('h2', {}, 'Logo en las facturas (PDF)'),
+    tieneLogo ? vista : aviso('Sin logo: el PDF muestra solo el nombre de la empresa.', 'info'),
+    h('div', { class: 'fila' }, campo('Imagen PNG o JPEG (máximo 300 KB)', archivo), subir, quitar));
 }
 
 export async function vistaDetalleEmpresa(cont, id) {
   if (!contexto.esAdmin) { sinPermiso(cont); return; }
-  const [e, llaves, saldoEmpresa, planes] = await Promise.all([
+  const [e, llaves, saldoEmpresa, planes, servicios] = await Promise.all([
     api(`/emisores/${id}`, { conEmisor: false }),
     api(`/api-keys?emisor_id=${id}`, { conEmisor: false }),
     api(`/emisores/${id}/paquetes`, { conEmisor: false }),
     api('/planes?activos=true', { conEmisor: false }),
+    api(`/emisores/${id}/suscripciones`, { conEmisor: false }),
   ]);
   // Pasa por el enrutador para recargar también el saldo de la barra superior
   const refrescar = () => enrutar();
@@ -155,8 +268,12 @@ export async function vistaDetalleEmpresa(cont, id) {
   const ambiente = h('select', {}, h('option', { value: 'stag', selected: e.ambiente === 'stag' }, 'Pruebas (stag)'),
     h('option', { value: 'prod', selected: e.ambiente === 'prod' }, 'Producción'));
   const activo = h('input', { type: 'checkbox', checked: e.activo });
+  const facturacionWeb = h('input', { type: 'checkbox', checked: e.facturacion_web });
+  const accesoApi = h('input', { type: 'checkbox', checked: e.acceso_api });
   const guardar = h('button', { type: 'button', class: 'primario', onclick: () => conBoton(guardar, async () => {
-    const cuerpo = { ambiente: ambiente.value, activo: activo.checked };
+    const cuerpo = {
+      ambiente: ambiente.value, activo: activo.checked, facturacion_web: facturacionWeb.checked, acceso_api: accesoApi.checked,
+    };
     for (const [k, el] of Object.entries(entradas)) cuerpo[k] = el.value.trim() || null;
     for (const k of ['nombre', 'codigo_actividad', 'correo', 'provincia', 'canton', 'distrito', 'otras_senas']) {
       if (!cuerpo[k]) delete cuerpo[k];
@@ -164,6 +281,7 @@ export async function vistaDetalleEmpresa(cont, id) {
     await api(`/emisores/${id}`, { method: 'PATCH', body: cuerpo, conEmisor: false });
     await cargarContexto();
     toast('Datos guardados', 'ok');
+    refrescar();
   }) }, 'Guardar cambios');
 
   // Certificado
@@ -233,11 +351,18 @@ export async function vistaDetalleEmpresa(cont, id) {
   vaciar(cont,
     h('div', { class: 'encabezado' },
       h('div', {}, h('a', { href: '#/empresas' }, '← Empresas'), h('h1', {}, `${e.nombre} · ${e.numero_identificacion}`))),
+    seccionServicios(e, servicios, refrescar),
     seccionSaldo,
     h('section', { class: 'tarjeta' }, h('h2', {}, 'Datos de la empresa'),
-      h('div', { class: 'campos' }, CAMPOS.map(([k, etiqueta]) => campo(etiqueta, entradas[k])),
-        campo('Ambiente de Hacienda', ambiente), h('label', { class: 'check' }, activo, 'Empresa activa')),
+      camposEmpresa(entradas),
+      h('div', { class: 'campos' },
+        campo('Ambiente de Hacienda', ambiente), h('label', { class: 'check' }, activo, 'Empresa activa'),
+        h('label', { class: 'check', title: 'Emitir, clientes, productos e inventario desde el panel para los usuarios de la empresa' },
+          facturacionWeb, 'Facturación en línea (panel con clientes, productos e inventario)'),
+        h('label', { class: 'check', title: 'El sistema de facturación del cliente se conecta con sus API keys' },
+          accesoApi, 'Conexión por API (su sistema de facturación)')),
       h('div', { class: 'acciones' }, guardar)),
+    seccionLogo(id, e.tiene_logo, refrescar),
     h('div', { class: 'campos dos' },
       h('section', { class: 'tarjeta' }, h('h2', {}, 'Certificado digital'),
         e.tiene_certificado
@@ -249,6 +374,7 @@ export async function vistaDetalleEmpresa(cont, id) {
         campo('Usuario', usuario), campo('Contraseña', clave),
         h('div', { class: 'acciones' }, guardarCred, probar), resultadoPrueba)),
     h('section', { class: 'tarjeta' }, h('h2', {}, 'Integración con otros sistemas'),
+      e.acceso_api ? null : aviso('La conexión por API está desactivada: las llaves de esta empresa no funcionan. Actívela en "Datos de la empresa".', 'alerta'),
       h('h3', {}, 'API keys'),
       tabla([
         { titulo: 'Nombre', valor: (k) => k.nombre },

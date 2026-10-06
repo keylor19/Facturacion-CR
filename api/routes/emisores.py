@@ -176,9 +176,11 @@ def crear_llave(payload: ApiKeyCrear, request: Request,
     """Crea una llave. La llave completa solo se muestra en esta respuesta."""
     if payload.emisor_id:
         try:
-            _emisor(db, UUID(payload.emisor_id))
+            emisor = _emisor(db, UUID(payload.emisor_id))
         except ValueError:
             raise HTTPException(status_code=422, detail="emisor_id inválido")
+        if emisor.acceso_api is False:
+            raise HTTPException(status_code=409, detail="Active primero la conexión por API de esta empresa")
     registro, llave = crear_api_key(db, payload.nombre, payload.es_admin, payload.emisor_id)
     auditoria.registrar(db, "llave.crear", principal=principal, request=request, emisor_id=registro.emisor_id,
                         detalle=f"{registro.nombre} {registro.prefijo}… ({'admin' if registro.es_admin else 'empresa'})")

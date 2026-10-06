@@ -17,7 +17,7 @@ from api.models.database import (
     SessionLocal, Emisor, Factura, DocumentoRecibido, FacturaEvento, EstadoFactura, Paquete,
     ESTADOS_REENVIABLES, ESTADOS_FINALES, utcnow,
 )
-from api.services import correo, emisores, hacienda_client, webhooks
+from api.services import catalogo_cabys, correo, emisores, hacienda_client, hacienda_publico, inventario, suscripciones, webhooks
 from api.services.fechas import zona_cr
 from api.services.hacienda_auth import HaciendaAuthError
 from config.settings import get_settings
@@ -59,6 +59,14 @@ def _al_cambiar_estado(doc) -> None:
         _encolar(enviar_correo, str(doc.id))
 
 
+def _revertir_inventario(db, doc) -> None:
+    """Comprobante rechazado: la venta/compra no existe, se devuelven las existencias."""
+    if isinstance(doc, Factura):
+        n = inventario.revertir_documento(db, doc)
+        if n:
+            _registrar_evento(db, doc, "INVENTARIO_REVERTIDO", f"{n} producto(s)")
+
+
 def _encolar(tarea, *args, **kwargs):
     try:
         tarea.apply_async(args=args, kwargs=kwargs)
@@ -82,6 +90,7 @@ def aplicar_respuesta_hacienda(db, doc, data: dict, evento: str) -> str:
         doc.estado = EstadoFactura.ACEPTADO
     elif estado == "rechazado":
         doc.estado = EstadoFactura.RECHAZADO
+        _revertir_inventario(db, doc)
     elif estado == "error":
         # Hacienda no pudo procesarlo: queda para revisión/reenvío (acotado por MAX_INTENTOS_ENVIO)
         doc.estado = EstadoFactura.ERROR_COMUNICACION
@@ -174,6 +183,7 @@ def enviar_documento(self, tipo: str, doc_id: str):
 
         # Resto de 4xx: error de estructura/firma. Reintentar NO lo va a arreglar.
         doc.estado = EstadoFactura.RECHAZADO
+        _revertir_inventario(db, doc)
         doc.mensaje_hacienda = causa[:4000]
         _registrar_evento(db, doc, "RECHAZO_RECEPCION", f"HTTP {resp.status_code}: {causa}")
         db.commit()
@@ -361,6 +371,12 @@ MENSAJES_SALDO = {
                       "{nombre} agotó su saldo de documentos: no podrá emitir hasta adquirir un nuevo paquete."),
     "paquete.por_vencer": ("Documentos por vencer",
                            "A {nombre} se le vencen {disponible} documentos el {vence}. Úselos antes de esa fecha."),
+    "suscripcion.por_vencer": ("Su servicio vence pronto",
+                               "El servicio de {servicio} de {nombre} vence el {vence}. Renuévelo para no interrumpir "
+                               "la facturación."),
+    "suscripcion.vencida": ("Su servicio venció",
+                            "El servicio de {servicio} de {nombre} venció el {vence}. Se suspenderá en {gracia} día(s) "
+                            "si no se renueva."),
 }
 
 
@@ -413,3 +429,58 @@ def revisar_paquetes():
         return {"avisos": len(paquetes)}
     finally:
         db.close()
+
+
+@celery_app.task
+def revisar_suscripciones():
+    """Diaria: avisa de servicios alquilados que vencen pronto o que acaban de vencer."""
+    if not suscripciones.control_activo():
+        return {"avisos": 0}
+    ahora = utcnow()
+    db = SessionLocal()
+    try:
+        avisos = 0
+        for emisor in db.scalars(select(Emisor).where(Emisor.activo.is_(True))).all():
+            for est in suscripciones.estados(db, emisor):
+                if not est["habilitado"] or est["vence"] is None:
+                    continue
+                if est["estado"] == "POR_VENCER":
+                    evento = "suscripcion.por_vencer"
+                elif est["vence"] < ahora and ahora - est["vence"] <= timedelta(days=1):
+                    evento = "suscripcion.vencida"   # solo el primer día después del vencimiento
+                else:
+                    continue
+                notificar_saldo.delay(str(emisor.id), evento, {
+                    "servicio": suscripciones.minuscula_inicial(est["nombre"]), "vence": est["vence"].astimezone(zona_cr()).strftime("%d/%m/%Y"),
+                    "gracia": settings.DIAS_GRACIA_SUSCRIPCION,
+                })
+                avisos += 1
+        return {"avisos": avisos}
+    finally:
+        db.close()
+
+
+@celery_app.task
+def actualizar_datos_hacienda():
+    """
+    Diaria: guarda el tipo de cambio del día (histórico propio), importa el
+    catálogo CABYS si el BCCR publicó una versión nueva (y verifica una muestra contra Hacienda),
+    refresca los datos públicos de Hacienda con más de DIAS_ACTUALIZAR_HACIENDA días y precarga
+    las cédulas de clientes y empresas.
+    """
+    resultado = {}
+    try:
+        resultado["tipo_cambio"] = hacienda_publico.tipos_de_cambio()["USD"]
+    except hacienda_publico.HaciendaPublicoError as exc:
+        resultado["tipo_cambio"] = f"sin actualizar: {exc}"
+    # Catálogo CABYS: versión nueva publicada por el BCCR o archivo modificado -> se importa solo
+    try:
+        resultado["cabys"] = catalogo_cabys.actualizar_si_hay_version_nueva()
+    except Exception as exc:  # un archivo dañado no debe detener el resto de la tarea
+        logger.error("No se pudo actualizar el catálogo CABYS: %s", exc)
+        resultado["cabys"] = str(exc)
+    # Red de seguridad: una muestra del catálogo local se compara con Hacienda
+    resultado["cabys_muestra"] = hacienda_publico.verificar_muestra_cabys()
+    resultado["registros"] = hacienda_publico.actualizar_registros()
+    logger.info("Datos de Hacienda actualizados: %s", resultado)
+    return resultado

@@ -10,6 +10,7 @@ const ACCIONES = [
   ['usuario.', 'Usuarios'],
   ['paquete.', 'Ventas de paquetes'],
   ['plan.', 'Planes'],
+  ['cabys.', 'Catálogo CABYS'],
 ];
 
 export async function vistaAuditoria(cont, filtro = '') {

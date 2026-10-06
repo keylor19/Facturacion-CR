@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 from config.settings import get_settings
 
 settings = get_settings()
@@ -30,15 +31,27 @@ celery_app.conf.update(
             "task": "workers.tasks.consultar_enviados",
             "schedule": 600.0,
         },
-        # Alerta de certificados digitales vencidos o por vencer (diaria)
+        # Tareas diarias a hora fija (hora de Costa Rica): no dependen de reinicios del contenedor
+        # Alerta de certificados digitales vencidos o por vencer (diaria, 6:00)
         "revisar-certificados": {
             "task": "workers.tasks.revisar_certificados",
-            "schedule": 86400.0,
+            "schedule": crontab(hour=6, minute=0),
         },
-        # Aviso de paquetes de documentos por vencer (diaria)
+        # Aviso de paquetes de documentos por vencer (diaria, 6:10)
         "revisar-paquetes": {
             "task": "workers.tasks.revisar_paquetes",
-            "schedule": 86400.0,
+            "schedule": crontab(hour=6, minute=10),
+        },
+        # Aviso de servicios alquilados por vencer o vencidos (diaria, 6:20)
+        "revisar-suscripciones": {
+            "task": "workers.tasks.revisar_suscripciones",
+            "schedule": crontab(hour=6, minute=20),
+        },
+        # Refresca los datos públicos de Hacienda guardados (contribuyentes,
+        # exoneraciones, CABYS...), tipo de cambio del día y versión nueva del catálogo CABYS (3:00)
+        "actualizar-datos-hacienda": {
+            "task": "workers.tasks.actualizar_datos_hacienda",
+            "schedule": crontab(hour=3, minute=0),
         },
     },
 )

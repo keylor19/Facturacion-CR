@@ -168,3 +168,9 @@ dl.datos dd { margin: 0; }
 .bloque { white-space: pre-wrap; background: #fff; border: 1px solid var(--borde); border-radius: 6px; padding: 10px; margin: 8px 0; max-height: 360px; overflow: auto; }
 .qr { display: block; background: #fff; padding: 8px; border: 1px solid var(--borde); border-radius: 8px; margin: 8px 0; }
 [hidden] { display: none !important; }
+.logo-empresa { display: block; max-width: 220px; max-height: 90px; margin: 6px 0 12px; background: #fff; border: 1px solid var(--borde); border-radius: 6px; padding: 6px; }
+.negativo { color: var(--rojo); }
+
+/* Secciones plegables (datos opcionales) */
+details { margin: 4px 0 14px; }
+details > summary { cursor: pointer; color: var(--suave); font-weight: 600; margin-bottom: 10px; }

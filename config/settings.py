@@ -106,6 +106,20 @@ class Settings(BaseSettings):
     SALDO_ALERTA_DOCUMENTOS: int = 20      # avisar cuando queden estos documentos
     DIAS_ALERTA_VENCIMIENTO_PAQUETE: int = 7
 
+    # --- Alquiler de servicios (conexión por API / facturación en línea) ---
+    # Si está activo, cada servicio funciona solo con una suscripción vigente.
+    CONTROL_SUSCRIPCIONES: bool = True
+    DIAS_GRACIA_SUSCRIPCION: int = 3       # días que sigue funcionando después de vencer
+    DIAS_ALERTA_SUSCRIPCION: int = 7       # avisar cuando falten estos días
+
+    # --- Datos públicos de Hacienda guardados localmente (contribuyentes, exoneraciones, CABYS...) ---
+    # Se usan primero los datos guardados; se vuelven a consultar a Hacienda pasados estos días
+    # y, si Hacienda no responde, se sigue trabajando con lo guardado.
+    DIAS_ACTUALIZAR_HACIENDA: int = 15
+    LOTE_ACTUALIZACION_HACIENDA: int = 500   # registros que actualiza la tarea diaria
+    # Catálogo CABYS oficial (Excel del BCCR). Cambiarlo cuando el BCCR publique una versión nueva.
+    CABYS_URL: str = "https://www.bccr.fi.cr/content/dam/bccr/noticias/2025/2025-04-01-catalogo-de-bienes-servicios-1.xlsx"
+
     # --- Límites de uso (por llave / usuario) ---
     LIMITE_SOLICITUDES_MINUTO: int = 300
     LIMITE_LOGIN_MINUTO: int = 20          # por IP

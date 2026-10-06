@@ -18,6 +18,26 @@ export function tablaPaquetes(paquetes, accion) {
   ].filter(Boolean), paquetes);
 }
 
+// Servicios alquilados (API / facturación en línea)
+const ESTADO_SERVICIO = {
+  ACTIVO: ['ACEPTADO', 'Activo'], POR_VENCER: ['CONTINGENCIA', 'Por vencer'], EN_GRACIA: ['CONTINGENCIA', 'Vencido (días de gracia)'],
+  VENCIDO: ['RECHAZADO', 'Vencido'], SIN_CONTRATAR: ['PENDIENTE', 'Sin contratar'], DESHABILITADO: ['RECHAZADO', 'Deshabilitado'],
+};
+
+export function badgeServicio(s) {
+  const [clase, texto] = ESTADO_SERVICIO[s.estado] || ['', s.estado];
+  return h('span', { class: `badge ${clase}` }, texto);
+}
+
+export function tablaServicios(servicios, accion) {
+  return tabla([
+    { titulo: 'Servicio', valor: (s) => s.nombre },
+    { titulo: 'Estado', valor: badgeServicio },
+    { titulo: 'Pagado hasta', valor: (s) => (s.vence ? fecha(s.vence, false) : '—') },
+    accion ? { titulo: '', valor: accion } : null,
+  ].filter(Boolean), servicios);
+}
+
 export function kpisSaldo(r) {
   return h('div', { class: 'kpis' },
     h('div', { class: `kpi ${r.alerta ? 'alerta' : ''}` }, h('div', { class: 'etiqueta' }, 'Documentos disponibles'),
@@ -30,12 +50,16 @@ export function kpisSaldo(r) {
 
 export async function vistaSaldo(cont) {
   const [r, movs] = await Promise.all([api('/saldo'), api('/saldo/movimientos?limit=200')]);
+  const servicios = r.control_suscripciones ? h('section', { class: 'tarjeta' }, h('h2', {}, 'Servicios contratados'),
+    tablaServicios(r.servicios.filter((s) => s.habilitado || s.vence)),
+    h('p', { class: 'suave' }, 'La mensualidad del servicio se paga aparte de los documentos. Para renovar, contacte a su proveedor.')) : null;
   if (!r.control_activo) {
-    vaciar(cont, h('h1', {}, 'Mi saldo'), aviso('El control de saldo está desactivado: la facturación no tiene límite.', 'info'));
+    vaciar(cont, h('h1', {}, 'Mi saldo'), aviso('El control de saldo está desactivado: la facturación no tiene límite.', 'info'), servicios);
     return;
   }
   vaciar(cont,
     h('h1', {}, 'Mi saldo de documentos'),
+    servicios,
     r.disponible <= 0
       ? aviso('Su saldo está agotado: no puede emitir comprobantes. Contacte a su proveedor para adquirir un paquete.', 'error')
       : r.alerta ? aviso(`Quedan pocos documentos (${r.disponible}). Adquiera un paquete para no interrumpir la facturación.`, 'alerta') : null,

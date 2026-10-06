@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api.models.database import ApiKey, Emisor, get_db, utcnow
-from api.services import limites, usuarios
+from api.services import limites, suscripciones, usuarios
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -166,4 +166,21 @@ def emisor_actual(
 
     if not emisor.activo:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "El emisor está inactivo")
+    # Llave de una empresa: requiere el servicio de conexión por API (habilitado y pagado)
+    if principal.api_key_id and not principal.es_admin and not suscripciones.activo(db, emisor, "api"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, suscripciones.motivo_inactivo(db, emisor, "api"))
+    return emisor
+
+
+def emisor_facturacion_web(
+    principal: Principal = Depends(autenticar), emisor: Emisor = Depends(emisor_actual),
+    db: Session = Depends(get_db),
+) -> Emisor:
+    """
+    Emitir y usar catálogos/inventario desde el panel requiere el servicio de
+    facturación en línea de la empresa (habilitado y pagado). No aplica a los
+    sistemas integrados por API ni a los administradores.
+    """
+    if principal.usuario_id and not principal.es_admin and not suscripciones.activo(db, emisor, "facturacion_web"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, suscripciones.motivo_inactivo(db, emisor, "facturacion_web"))
     return emisor

@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { h, vaciar, dinero, modal, conBoton, toast, campo, opciones, tabla, aviso } from '../dom.js';
+import { h, vaciar, dinero, modal, conBoton, toast, campo, opciones, tabla, aviso, alCompletarCedula, avisoContribuyente, avisoNoInscrito, avisoRespaldo } from '../dom.js';
 import {
   TIPOS_DOCUMENTO, TIPOS_IDENTIFICACION, CONDICIONES_VENTA, MEDIOS_PAGO, TARIFAS_IVA, DESCUENTOS, UNIDADES,
   INSTITUCIONES_EXONERACION, TIPOS_DOC_REFERENCIA, CODIGOS_REFERENCIA, SITUACIONES,
@@ -11,7 +11,47 @@ const tarifasOpciones = (sel) => Object.entries(TARIFAS_IVA).map(([k, [t]]) => h
 // ---------------------------------------------------------------------------
 // Persona (receptor o proveedor) con búsqueda en Hacienda
 // ---------------------------------------------------------------------------
-function bloquePersona(titulo, { conUbicacion = false } = {}) {
+function dialogoElegirCliente(alElegir) {
+  const q = h('input', { type: 'search', placeholder: 'Nombre o identificación' });
+  const resultados = h('div');
+  const buscar = async () => {
+    const lista = await api(`/catalogo/clientes?limite=50${q.value.trim() ? `&q=${encodeURIComponent(q.value.trim())}` : ''}`);
+    vaciar(resultados, lista.length ? tabla([
+      { titulo: 'Nombre', valor: (c) => c.nombre },
+      { titulo: 'Identificación', valor: (c) => h('span', { class: 'mono' }, c.numero_identificacion) },
+      { titulo: 'Correo', valor: (c) => c.correo || '' },
+    ], lista, (c) => { alElegir(c); m.cerrar(); })
+      : aviso('No hay clientes que coincidan. Puede registrarlos en Clientes o marcar "Guardar en mis clientes frecuentes" al facturar.', 'info'));
+  };
+  const form = h('form', { class: 'fila', onsubmit: (e) => { e.preventDefault(); buscar().catch((err) => toast(err.message, 'error')); } },
+    q, h('button', { type: 'submit', class: 'primario' }, 'Buscar'));
+  const m = modal('Elegir cliente', [form, resultados], { ancho: true });
+  buscar().catch((err) => toast(err.message, 'error'));
+}
+
+function dialogoElegirProducto(alElegir) {
+  const q = h('input', { type: 'search', placeholder: 'Código, descripción o CABYS' });
+  const resultados = h('div');
+  const cant = (v) => Number(v).toLocaleString('es-CR', { maximumFractionDigits: 3 });
+  const buscar = async () => {
+    const lista = await api(`/catalogo/productos?limite=100${q.value.trim() ? `&q=${encodeURIComponent(q.value.trim())}` : ''}`);
+    vaciar(resultados, lista.length ? tabla([
+      { titulo: 'Código', valor: (p) => h('span', { class: 'mono' }, p.codigo) },
+      { titulo: 'Descripción', valor: (p) => p.descripcion },
+      { titulo: 'Precio sin IVA', num: true, valor: (p) => dinero(p.precio_unitario, 'CRC') },
+      { titulo: 'Existencia', num: true, valor: (p) => (p.controla_inventario
+        ? h('span', { class: `badge ${Number(p.existencia) <= 0 ? 'RECHAZADO' : p.bajo_minimo ? 'CONTINGENCIA' : 'ACEPTADO'}` }, cant(p.existencia))
+        : '—') },
+    ], lista, (p) => { alElegir(p); m.cerrar(); })
+      : aviso('No hay productos que coincidan. Regístrelos en Productos.', 'info'));
+  };
+  const form = h('form', { class: 'fila', onsubmit: (e) => { e.preventDefault(); buscar().catch((err) => toast(err.message, 'error')); } },
+    q, h('button', { type: 'submit', class: 'primario' }, 'Buscar'));
+  const m = modal('Agregar del catálogo', [form, resultados], { ancho: true });
+  buscar().catch((err) => toast(err.message, 'error'));
+}
+
+function bloquePersona(titulo, { conUbicacion = false, conCatalogo = false } = {}) {
   const tipo = h('select', {}, opciones(TIPOS_IDENTIFICACION, '01'));
   const numero = h('input', { type: 'text', maxlength: '20', placeholder: 'Sin guiones' });
   const nombre = h('input', { type: 'text', maxlength: '100' });
@@ -25,37 +65,84 @@ function bloquePersona(titulo, { conUbicacion = false } = {}) {
     otras_senas: h('input', { type: 'text', maxlength: '250' }),
   };
 
-  const buscar = h('button', { type: 'button', onclick: () => conBoton(buscar, async () => {
-    const id = numero.value.replace(/\D/g, '');
-    if (!id) { toast('Indique la identificación', 'error'); return; }
-    const c = await api(`/hacienda/contribuyentes/${id}`);
-    nombre.value = c.nombre || '';
-    if (c.tipoIdentificacion) tipo.value = c.tipoIdentificacion;
-    numero.value = id;
-    vaciar(actividad, h('option', { value: '' }, '— (opcional)'),
-      (c.actividades || []).filter((a) => a.estado === 'A' || !a.estado)
-        .map((a) => h('option', { value: String(a.codigo).padStart(6, '0') }, `${a.codigo} · ${a.descripcion}`)));
-    const s = c.situacion || {};
-    const alertas = [];
-    if (s.moroso === 'SI') alertas.push('moroso');
-    if (s.omiso === 'SI') alertas.push('omiso');
-    if (s.estado && s.estado !== 'Inscrito') alertas.push(`estado: ${s.estado}`);
-    vaciar(info, alertas.length
-      ? aviso(`Atención: el contribuyente aparece ${alertas.join(', ')} en Hacienda.`, 'alerta')
-      : aviso(`${c.nombre} · ${c.regimen?.descripcion || ''} · ${s.estado || ''}`, 'ok'));
-  }) }, 'Buscar en Hacienda');
+  // Catálogo de clientes frecuentes
+  const guardarCliente = h('input', { type: 'checkbox' });
+  let clienteId = null;
+  const cargarCliente = (cl) => {
+    clienteId = cl.id;
+    tipo.value = cl.tipo_identificacion;
+    numero.value = cl.numero_identificacion;
+    nombre.value = cl.nombre;
+    correo.value = cl.correo || '';
+    if (cl.codigo_actividad) {
+      vaciar(actividad, h('option', { value: '' }, '— (opcional)'),
+        h('option', { value: cl.codigo_actividad, selected: true }, cl.codigo_actividad));
+    }
+    if (conUbicacion) for (const k of Object.keys(ubic)) ubic[k].value = cl[k] || '';
+    guardarCliente.checked = false;
+    vaciar(info, aviso(`Cliente del catálogo: ${cl.nombre}`, 'ok'));
+  };
 
-  const seccion = h('section', { class: 'tarjeta' }, h('h2', {}, titulo),
+  // Al escribir la identificación se llena todo: primero desde Mis clientes
+  // (correo, ubicación) y luego con los datos de Hacienda (nombre, estado, actividades).
+  const consultar = alCompletarCedula(numero, tipo, async (id, vigente) => {
+    let delCatalogo = null;
+    if (conCatalogo) {
+      try {
+        const lista = await api(`/catalogo/clientes?q=${encodeURIComponent(id)}`);
+        delCatalogo = lista.find((cl) => cl.numero_identificacion === id) || null;
+      } catch { /* sin acceso al catálogo: solo Hacienda */ }
+      if (!vigente()) return;
+      if (delCatalogo) cargarCliente(delCatalogo);
+    }
+    if (!delCatalogo) vaciar(info, h('p', { class: 'suave' }, 'Consultando Hacienda…'));
+    let c;
+    try {
+      c = await api(`/hacienda/contribuyentes/${id}`);
+    } catch (e) {
+      if (vigente() && !delCatalogo) vaciar(info, e.status === 404 ? avisoNoInscrito(id) : aviso(e.message, 'error'));
+      return;
+    }
+    if (!vigente()) return;
+    nombre.value = c.nombre || nombre.value;
+    if (c.tipoIdentificacion) tipo.value = c.tipoIdentificacion;
+    const activas = (c.actividades || []).filter((a) => a.estado === 'A' || !a.estado);
+    const elegida = delCatalogo?.codigo_actividad
+      || String((activas.find((a) => a.tipo === 'P') || activas[0] || {}).codigo || '').padStart(6, '0');
+    vaciar(actividad, h('option', { value: '' }, '— (opcional)'),
+      activas.map((a) => {
+        const cod = String(a.codigo).padStart(6, '0');
+        return h('option', { value: cod, selected: cod === elegida }, `${a.codigo} · ${a.descripcion}`);
+      }),
+      elegida && !activas.some((a) => String(a.codigo).padStart(6, '0') === elegida)
+        ? h('option', { value: elegida, selected: true }, elegida) : null);
+    vaciar(info, delCatalogo ? aviso(`Cliente del catálogo: ${delCatalogo.nombre}`, 'ok') : null, avisoContribuyente(c, activas));
+  });
+  const buscar = h('button', { type: 'button', onclick: () => conBoton(buscar, consultar) }, 'Volver a consultar');
+  const elegir = conCatalogo ? h('button', { type: 'button', class: 'primario', onclick: () => dialogoElegirCliente(cargarCliente) }, 'Elegir cliente') : null;
+  [numero, nombre].forEach((el) => el.addEventListener('input', () => { clienteId = null; }));
+
+  const seccion = h('section', { class: 'tarjeta' },
+    h('div', { class: 'encabezado' }, h('h2', {}, titulo), elegir),
     h('div', { class: 'campos' },
       campo('Tipo de identificación', tipo),
       h('div', { class: 'fila doble' }, campo('Identificación', numero), buscar),
       campo('Nombre', nombre), campo('Correo', correo), campo('Actividad económica', actividad)),
     conUbicacion ? h('div', { class: 'campos' }, campo('Provincia', ubic.provincia), campo('Cantón', ubic.canton),
       campo('Distrito', ubic.distrito), campo('Otras señas', ubic.otras_senas)) : null,
+    conCatalogo ? h('label', { class: 'check' }, guardarCliente, 'Guardar en mis clientes frecuentes') : null,
     info);
 
   return {
     seccion,
+    // Guarda el receptor en el catálogo si se marcó la casilla (no bloquea la emisión)
+    async guardarEnCatalogo() {
+      if (!conCatalogo || !guardarCliente.checked || clienteId || !numero.value.trim()) return;
+      const cuerpo = { tipo_identificacion: tipo.value, numero_identificacion: numero.value.trim(), nombre: nombre.value.trim() };
+      if (correo.value.trim()) cuerpo.correo = correo.value.trim();
+      if (actividad.value) cuerpo.codigo_actividad = actividad.value;
+      try { await api('/catalogo/clientes', { method: 'POST', body: cuerpo }); } catch { /* ya existía o datos incompletos */ }
+    },
     valor() {
       if (!numero.value.trim() && !nombre.value.trim()) return null;
       const p = { nombre: nombre.value.trim(), tipo_identificacion: tipo.value, numero_identificacion: numero.value.trim() };
@@ -67,13 +154,14 @@ function bloquePersona(titulo, { conUbicacion = false } = {}) {
       return p;
     },
     actividad: () => actividad.value || null,
+    identificacion: () => numero.value.replace(/\D/g, ''),
   };
 }
 
 // ---------------------------------------------------------------------------
 // Línea de detalle
 // ---------------------------------------------------------------------------
-function crearLinea(alCambiar, alQuitar) {
+function crearLinea(alCambiar, alQuitar, { receptorId = () => null, exoneracion = () => null } = {}) {
   const c = {
     cabys: h('input', { type: 'text', maxlength: '13', placeholder: '13 dígitos', size: '14' }),
     descripcion: h('input', { type: 'text', maxlength: '200' }),
@@ -99,25 +187,94 @@ function crearLinea(alCambiar, alQuitar) {
   };
   const total = h('span');
   const exoInfo = h('div');
+  // Producto del catálogo (descuenta inventario si lo controla)
+  let productoId = null;
+  const infoProducto = h('div', { class: 'suave' });
 
-  const validarExo = h('button', { type: 'button', class: 'chico', onclick: () => conBoton(validarExo, async () => {
-    if (!c.exoAut.value.trim()) { toast('Indique el número de autorización', 'error'); return; }
-    const ex = await api(`/hacienda/exoneraciones/${encodeURIComponent(c.exoAut.value.trim())}`);
+  // Exoneraciones de Hacienda (AL-XXXXXXXX-XX): al escribir el número se validan y
+  // se llenan solos el tipo, la institución, la fecha y la tarifa. Otros documentos se digitan.
+  let exoConsultada = '';
+  const consultarExo = async (forzar = false) => {
+    const aut = c.exoAut.value.trim().toUpperCase();
+    if (!/^AL-\d{8}-\d{2}$/.test(aut)) {
+      if (forzar) toast('Solo las autorizaciones AL-XXXXXXXX-XX se validan en Hacienda; complete los datos a mano', 'error');
+      return;
+    }
+    if (!forzar && aut === exoConsultada) return;
+    exoConsultada = aut;
+    c.exoAut.value = aut;
+    vaciar(exoInfo, h('p', { class: 'suave' }, 'Validando en Hacienda…'));
+    let ex;
+    try {
+      ex = await api(`/hacienda/exoneraciones/${encodeURIComponent(aut)}`);
+    } catch (e) {
+      exoConsultada = '';
+      vaciar(exoInfo, aviso(e.status === 404 ? `La autorización ${aut} no existe en Hacienda.` : e.message, 'error'));
+      return;
+    }
     if (ex.tipoDocumento?.codigo) c.exoTipo.value = String(ex.tipoDocumento.codigo).padStart(2, '0');
+    if (ex.CodigoInstitucion && INSTITUCIONES_EXONERACION[String(ex.CodigoInstitucion).padStart(2, '0')]) {
+      c.exoInst.value = String(ex.CodigoInstitucion).padStart(2, '0');
+    }
     if (ex.fechaEmision) c.exoFecha.value = String(ex.fechaEmision).slice(0, 10);
     const pct = Number(ex.porcentajeExoneracion ?? ex.tarifaExonerada);
     if (!Number.isNaN(pct) && pct > 0) c.exoTarifa.value = String(pct > 13 ? 13 * pct / 100 : pct);
-    vaciar(exoInfo, aviso(
-      `${ex.nombreInstitucion || ''} · vence ${String(ex.fechaVencimiento || '').slice(0, 10)} · identificación ${ex.identificacion || ''}`,
-      'ok'));
-  }) }, 'Validar en Hacienda');
+    alCambiar();
+    const vence = String(ex.fechaVencimiento || '').slice(0, 10);
+    const problemas = [];
+    if (vence && vence < new Date().toISOString().slice(0, 10)) problemas.push(`está vencida desde ${vence}`);
+    const rid = receptorId();
+    if (rid && ex.identificacion && String(ex.identificacion) !== rid) problemas.push(`pertenece a la identificación ${ex.identificacion}, no al cliente`);
+    const cab = c.cabys.value.trim();
+    if (ex.poseeCabys && cab && Array.isArray(ex.cabys) && !ex.cabys.includes(cab)) problemas.push(`no autoriza el CABYS ${cab}`);
+    vaciar(exoInfo, problemas.length
+      ? aviso(`Atención: la exoneración ${problemas.join('; ')}.`, 'error')
+      : aviso(`${ex.nombreInstitucion || ''} · ${ex.porcentajeExoneracion ?? ''}% · vence ${vence} · identificación ${ex.identificacion || ''}`, 'ok'));
+  };
+  c.exoAut.addEventListener('input', () => { if (/^AL-\d{8}-\d{2}$/i.test(c.exoAut.value.trim())) consultarExo(); });
+  c.exoAut.addEventListener('change', () => consultarExo());
+  const validarExo = h('button', { type: 'button', class: 'chico', onclick: () => conBoton(validarExo, () => consultarExo(true)) }, 'Volver a validar');
+
+  // Exoneración del cliente (para toda la factura): se aplica sola si el CABYS de la
+  // línea está en la lista autorizada; si no, se avisa que no está contemplado.
+  const estadoExo = h('div');
+  let exoAutomatica = false;
+  const quitarExoAutomatica = () => {
+    if (!exoAutomatica) return;
+    c.exoAut.value = ''; c.exoTipo.value = ''; c.exoFecha.value = ''; c.exoTarifa.value = '';
+    exoAutomatica = false;
+  };
+  const aplicarExoneracion = (avisar = false) => {
+    const ex = exoneracion();
+    const cab = c.cabys.value.trim();
+    if (!ex || !/^\d{13}$/.test(cab)) {
+      quitarExoAutomatica();
+      vaciar(estadoExo);
+      alCambiar();
+      return;
+    }
+    if (ex.cubre(cab)) {
+      c.exoAut.value = ex.autorizacion;
+      c.exoTipo.value = ex.tipo; c.exoInst.value = ex.institucion; c.exoFecha.value = ex.fecha; c.exoTarifa.value = ex.tarifa;
+      exoAutomatica = true;
+      vaciar(estadoExo, h('span', { class: 'badge ACEPTADO' }, `Exonerado ${ex.tarifa} pts · ${ex.autorizacion}`));
+    } else {
+      quitarExoAutomatica();
+      vaciar(estadoExo, h('span', { class: 'badge CONTINGENCIA', title: 'Esta línea se factura con IVA completo' },
+        `No contemplado en la exoneración ${ex.autorizacion}`));
+      if (avisar) toast(`El CABYS ${cab} no está contemplado en la exoneración ${ex.autorizacion}: se facturará con IVA.`, 'error');
+    }
+    alCambiar();
+  };
+  c.cabys.addEventListener('change', () => aplicarExoneracion(true));
+  c.cabys.addEventListener('input', () => { if (/^\d{13}$/.test(c.cabys.value.trim())) aplicarExoneracion(true); });
 
   const buscarCabys = h('button', { type: 'button', class: 'chico', title: 'Buscar CABYS', onclick: () => dialogoCabys((item) => {
     c.cabys.value = item.codigo;
     if (!c.descripcion.value) c.descripcion.value = String(item.descripcion).slice(0, 200);
     const t = TARIFA_POR_PORCENTAJE[Number(item.impuesto)];
     if (t) c.tarifa.value = t;
-    alCambiar();
+    aplicarExoneracion(true);
   }) }, '🔍');
 
   const extra = h('tr', { class: 'extra oculto' }, h('td', { colspan: '10' },
@@ -127,7 +284,7 @@ function crearLinea(alCambiar, alQuitar) {
       campo('Factor IVA bienes usados', c.factor),
       h('label', { class: 'check' }, c.noSujeto, 'No sujeto a IVA'),
       h('label', { class: 'check' }, c.asumido, 'Impuesto asumido por el emisor')),
-    h('h3', {}, 'Exoneración'),
+    h('h3', {}, 'Exoneración solo de esta línea (otro documento)'),
     h('div', { class: 'campos' },
       h('div', { class: 'fila' }, campo('Autorización', c.exoAut), validarExo),
       campo('Tipo de documento', c.exoTipo), campo('Institución', c.exoInst), campo('Fecha de emisión', c.exoFecha),
@@ -136,7 +293,7 @@ function crearLinea(alCambiar, alQuitar) {
 
   const fila = h('tr', {},
     h('td', {}, h('div', { class: 'fila' }, c.cabys, buscarCabys)),
-    h('td', {}, c.descripcion), h('td', {}, c.cantidad), h('td', {}, c.unidad), h('td', {}, c.precio),
+    h('td', {}, c.descripcion, infoProducto, estadoExo), h('td', {}, c.cantidad), h('td', {}, c.unidad), h('td', {}, c.precio),
     h('td', {}, c.descuento), h('td', {}, c.tarifa), h('td', { class: 'num' }, total),
     h('td', {}, h('button', { type: 'button', class: 'chico', title: 'Opciones', onclick: () => extra.classList.toggle('oculto') }, '⚙')),
     h('td', {}, h('button', { type: 'button', class: 'chico peligro', title: 'Quitar', onclick: () => { fila.remove(); extra.remove(); alQuitar(linea); } }, '✕')));
@@ -146,6 +303,33 @@ function crearLinea(alCambiar, alQuitar) {
 
   const linea = {
     filas: [fila, extra],
+    vacia: () => !c.cabys.value.trim() && !c.descripcion.value.trim(),
+    tarifa: () => c.tarifa.value,
+    cargarProducto(p) {
+      productoId = p.id;
+      c.cabys.value = p.codigo_cabys;
+      c.descripcion.value = p.descripcion;
+      c.codigoComercial.value = p.codigo;
+      if (UNIDADES[p.unidad_medida]) c.unidad.value = p.unidad_medida;
+      c.precio.value = Number(p.precio_unitario);
+      c.tarifa.value = p.codigo_tarifa_iva;
+      infoProducto.textContent = p.controla_inventario
+        ? `${p.codigo} · existencia ${Number(p.existencia).toLocaleString('es-CR', { maximumFractionDigits: 3 })}`
+        : p.codigo;
+      aplicarExoneracion(true);
+      c.cantidad.focus();
+      c.cantidad.select();
+    },
+    // Línea desde la lista de CABYS autorizados de la exoneración
+    cargarCabys(item) {
+      c.cabys.value = item.codigo;
+      if (item.descripcion) c.descripcion.value = String(item.descripcion).slice(0, 200);
+      const t = TARIFA_POR_PORCENTAJE[Number(item.impuesto)];
+      if (t) c.tarifa.value = t;
+      aplicarExoneracion();
+      (c.descripcion.value ? c.precio : c.descripcion).focus();
+    },
+    aplicarExoneracion: () => aplicarExoneracion(false),
     calculo() {
       const bruto = Number(c.cantidad.value || 0) * Number(c.precio.value || 0);
       const subtotal = bruto - Number(c.descuento.value || 0);
@@ -166,6 +350,7 @@ function crearLinea(alCambiar, alQuitar) {
       };
       if (Number(c.descuento.value) > 0) { p.descuento = c.descuento.value; p.codigo_descuento = c.codigoDescuento.value; }
       if (c.codigoComercial.value.trim()) p.codigo_comercial = c.codigoComercial.value.trim();
+      if (productoId) p.producto_id = productoId;
       if (c.partida.value.trim()) p.partida_arancelaria = c.partida.value.trim();
       if (c.noSujeto.checked) p.no_sujeto = true;
       if (c.asumido.checked) p.impuesto_asumido_emisor = true;
@@ -183,7 +368,7 @@ function crearLinea(alCambiar, alQuitar) {
   return linea;
 }
 
-function dialogoCabys(alElegir) {
+export function dialogoCabys(alElegir) {
   const q = h('input', { type: 'search', placeholder: 'Ej.: café, consultoría, repuestos…' });
   const resultados = h('div');
   const buscar = h('button', { type: 'submit', class: 'primario' }, 'Buscar');
@@ -220,8 +405,90 @@ export async function vistaEmitir(cont) {
   const ivaDevuelto = h('input', { type: 'number', step: '0.01', min: '0', placeholder: 'Servicios de salud con tarjeta' });
   const notas = h('textarea', { rows: '2', maxlength: '1000' });
 
-  const receptor = bloquePersona('Cliente (receptor)');
+  const receptor = bloquePersona('Cliente (receptor)', { conCatalogo: true });
   const proveedor = bloquePersona('Proveedor (factura de compra)', { conUbicacion: true });
+
+  // Exoneración del cliente para toda la factura: al escribir la autorización se
+  // cargan de Hacienda los productos y servicios (CABYS) que cubre.
+  let exoCliente = null;
+  const exoAut = h('input', { type: 'text', maxlength: '14', placeholder: 'AL-00000000-24' });
+  const exoInfo = h('div');
+  const exoLista = h('div');
+  let exoConsultada = '';
+  const reaplicarExo = () => lineas.forEach((l) => l.aplicarExoneracion());
+  const consultarExoCliente = async (forzar = false) => {
+    const aut = exoAut.value.trim().toUpperCase();
+    if (!aut) { exoConsultada = ''; exoCliente = null; vaciar(exoInfo); vaciar(exoLista); reaplicarExo(); return; }
+    if (!/^AL-\d{8}-\d{2}$/.test(aut)) {
+      if (forzar) vaciar(exoInfo, aviso('Formato: AL-XXXXXXXX-XX. Otros documentos de exoneración se indican en cada línea (⚙).', 'error'));
+      return;
+    }
+    if (!forzar && aut === exoConsultada) return;
+    exoConsultada = aut;
+    exoAut.value = aut;
+    exoCliente = null;
+    vaciar(exoLista);
+    vaciar(exoInfo, h('p', { class: 'suave' }, 'Consultando la exoneración y sus productos en Hacienda…'));
+    let ex;
+    try {
+      ex = await api(`/hacienda/exoneraciones/${encodeURIComponent(aut)}?detalle=true`);
+    } catch (e) {
+      exoConsultada = '';
+      vaciar(exoInfo, aviso(e.status === 404 ? `La autorización ${aut} no existe en Hacienda.` : e.message, 'error'));
+      reaplicarExo();
+      return;
+    }
+    if (aut !== exoAut.value.trim().toUpperCase()) return;
+    const hoy = new Date().toISOString().slice(0, 10);
+    const vence = String(ex.fechaVencimiento || '').slice(0, 10);
+    const rid = receptor.identificacion();
+    const pct = Number(ex.porcentajeExoneracion ?? ex.tarifaExonerada);
+    const inst = String(ex.CodigoInstitucion || '').padStart(2, '0');
+    const autorizados = new Set((ex.cabys_detalle || []).map((x) => x.codigo));
+    const problemas = [];
+    if (vence && vence < hoy) problemas.push(`está vencida desde ${vence}`);
+    if (rid && ex.identificacion && String(ex.identificacion) !== rid) problemas.push(`pertenece a la identificación ${ex.identificacion}, no a este cliente`);
+    if (problemas.length) {
+      vaciar(exoInfo, aviso(`No se puede aplicar: la exoneración ${problemas.join(' y ')}.`, 'error'));
+      reaplicarExo();
+      return;
+    }
+    exoCliente = {
+      autorizacion: aut,
+      tipo: String(ex.tipoDocumento?.codigo || '').padStart(2, '0'),
+      institucion: INSTITUCIONES_EXONERACION[inst] ? inst : '01',
+      fecha: String(ex.fechaEmision || '').slice(0, 10),
+      tarifa: String(!Number.isNaN(pct) && pct > 0 ? (pct > 13 ? 13 * pct / 100 : pct) : 13),
+      identificacion: String(ex.identificacion || ''),
+      cubre: (cabys) => ex.aplica_a_todo || autorizados.has(cabys),
+    };
+    vaciar(exoInfo, avisoRespaldo(ex), aviso(
+      `${ex.nombreInstitucion || ''} · ${ex.porcentajeExoneracion ?? ''}% · vence ${vence || '—'} · identificación ${ex.identificacion || ''} · `
+      + (ex.aplica_a_todo ? 'aplica a todos los productos y servicios.' : `${autorizados.size} producto(s)/servicio(s) autorizado(s).`), 'ok'));
+    if (!ex.aplica_a_todo) {
+      vaciar(exoLista,
+        h('p', { class: 'suave' }, 'Productos y servicios que cubre (clic para agregarlo a la factura). Las líneas con otros CABYS se facturan con IVA.'),
+        tabla([
+          { titulo: 'CABYS', valor: (x) => h('span', { class: 'mono' }, x.codigo) },
+          { titulo: 'Descripción', valor: (x) => x.descripcion || h('span', { class: 'suave' }, '(sin descripción)') },
+          { titulo: 'IVA', num: true, valor: (x) => (x.impuesto !== null && x.impuesto !== undefined ? `${x.impuesto}%` : '') },
+        ], ex.cabys_detalle, (x) => {
+          const ultima = lineas[lineas.length - 1];
+          (ultima && ultima.vacia() ? ultima : agregarLinea()).cargarCabys(x);
+        }));
+    }
+    reaplicarExo();
+  };
+  exoAut.addEventListener('input', () => {
+    const v = exoAut.value.trim();
+    if (!v || /^AL-\d{8}-\d{2}$/i.test(v)) consultarExoCliente();
+  });
+  exoAut.addEventListener('change', () => consultarExoCliente());
+  const revalidarExo = h('button', { type: 'button', onclick: () => conBoton(revalidarExo, () => consultarExoCliente(true)) }, 'Volver a consultar');
+  const seccionExo = h('section', { class: 'tarjeta' },
+    h('h2', {}, 'Exoneración del cliente (opcional)'),
+    h('div', { class: 'fila' }, campo('Número de autorización', exoAut), revalidarExo),
+    exoInfo, exoLista);
 
   const ref = {
     tipo: h('select', {}, opciones(TIPOS_DOC_REFERENCIA, '01')),
@@ -250,7 +517,25 @@ export async function vistaEmitir(cont) {
   const cuerpoLineas = h('tbody');
   const lineas = [];
   const resumen = h('table', { class: 'totales' });
+
+  // Tarifa reducida 1%: si son insumos agropecuarios o de pesca, el cliente debe estar
+  // registrado en el MAG o INCOPESCA. Se consulta solo si el usuario lo pide.
+  const resultadoAgro = h('div');
+  const verificarAgro = h('button', { type: 'button', class: 'chico', onclick: () => conBoton(verificarAgro, async () => {
+    const id = receptor.identificacion();
+    if (id.length < 9) { vaciar(resultadoAgro, aviso('Indique primero la identificación del cliente', 'error')); return; }
+    const r = await api(`/hacienda/productores/${id}`);
+    const registros = [r.agropecuario ? 'MAG (agropecuario)' : null, r.pesca ? 'INCOPESCA (pesca)' : null].filter(Boolean);
+    vaciar(resultadoAgro, r.registrado
+      ? aviso(`El cliente está registrado en ${registros.join(' y ')}: aplica la tarifa reducida de insumos.`, 'ok')
+      : aviso('El cliente NO está registrado en el MAG ni en INCOPESCA: los insumos agropecuarios o de pesca no pueden facturarse con la tarifa reducida.', 'error'));
+  }) }, 'Verificar cliente en MAG / INCOPESCA');
+  const avisoAgro = h('div', { class: 'oculto' },
+    aviso('Hay líneas con tarifa 1%. Si son insumos agropecuarios o de pesca, verifique que el cliente esté registrado como productor.', 'info'),
+    verificarAgro, resultadoAgro);
+
   const recalcular = () => {
+    avisoAgro.classList.toggle('oculto', tipo.value === '08' || !lineas.some((l) => l.tarifa() === '02'));
     let sub = 0; let iva = 0; let desc = 0;
     lineas.forEach((l) => { const r = l.calculo(); sub += r.subtotal; iva += r.iva; desc += r.descuento; });
     const cargo = servicio10.checked ? sub * 0.10 : 0;
@@ -265,19 +550,29 @@ export async function vistaEmitir(cont) {
       h('tr', { class: 'total' }, h('td', {}, 'Total estimado'), h('td', { class: 'num' }, dinero(sub + iva + cargo - dev, mon)))));
   };
   const agregarLinea = () => {
-    const l = crearLinea(recalcular, (x) => { lineas.splice(lineas.indexOf(x), 1); recalcular(); });
+    const l = crearLinea(recalcular, (x) => { lineas.splice(lineas.indexOf(x), 1); recalcular(); },
+      { receptorId: receptor.identificacion, exoneracion: () => exoCliente });
     lineas.push(l);
     cuerpoLineas.append(...l.filas);
     recalcular();
+    return l;
   };
+  const agregarDelCatalogo = () => dialogoElegirProducto((p) => {
+    const ultima = lineas[lineas.length - 1];
+    (ultima && ultima.vacia() ? ultima : agregarLinea()).cargarProducto(p);
+  });
   agregarLinea();
   [servicio10, ivaDevuelto, moneda].forEach((el) => el.addEventListener('input', recalcular));
+  tipo.addEventListener('change', recalcular);
 
-  const consultarTc = h('button', { type: 'button', onclick: () => conBoton(consultarTc, async () => {
+  // El tipo de cambio de Hacienda se llena solo al elegir USD o EUR (se puede corregir a mano)
+  const cargarTc = async () => {
     if (moneda.value === 'CRC') { tipoCambio.value = ''; return; }
     const r = await api(`/hacienda/tipo-cambio/${moneda.value}`);
     tipoCambio.value = r.tipo_cambio;
-  }) }, 'Consultar');
+  };
+  moneda.addEventListener('change', () => cargarTc().catch((e) => toast(e.message, 'error')));
+  const consultarTc = h('button', { type: 'button', onclick: () => conBoton(consultarTc, cargarTc) }, 'Actualizar');
 
   const campoFecha = campo('Fecha real de la venta', fechaEmision);
   const campoPlazo = campo('Plazo de crédito', plazo);
@@ -287,6 +582,7 @@ export async function vistaEmitir(cont) {
   const actualizarVisibilidad = () => {
     const t = tipo.value;
     receptor.seccion.classList.toggle('oculto', t === '08');
+    seccionExo.classList.toggle('oculto', t === '08');
     proveedor.seccion.classList.toggle('oculto', t !== '08');
     seccionRef.classList.toggle('oculto', !(['02', '03', '08'].includes(t) || situacion.value === '2'));
     campoFecha.classList.toggle('oculto', situacion.value === '1');
@@ -304,6 +600,10 @@ export async function vistaEmitir(cont) {
     vaciar(mensaje);
     conBoton(emitir, async () => {
       const t = tipo.value;
+      if (t !== '08' && exoCliente?.identificacion && receptor.identificacion() !== exoCliente.identificacion) {
+        vaciar(mensaje, aviso(`La exoneración ${exoCliente.autorizacion} es de la identificación ${exoCliente.identificacion}; cambie el cliente o quite la exoneración.`, 'error'));
+        return;
+      }
       const datos = {
         tipo_documento: t, sucursal: Number(sucursal.value), terminal: Number(terminal.value),
         condicion_venta: condicion.value, moneda: moneda.value,
@@ -332,6 +632,7 @@ export async function vistaEmitir(cont) {
       }
       try {
         const r = await api('/facturas', { method: 'POST', body: datos });
+        if (t !== '08') await receptor.guardarEnCatalogo();
         toast(r.message, 'ok');
         location.hash = `#/comprobantes/${r.factura_id}`;
       } catch (err) {
@@ -345,14 +646,18 @@ export async function vistaEmitir(cont) {
       campo('Tipo', tipo), campo('Sucursal', sucursal), campo('Terminal', terminal),
       campo('Situación', situacion), campoFecha, campo('Referencia interna', refExterna))),
   receptor.seccion,
+  seccionExo,
   proveedor.seccion,
   h('section', { class: 'tarjeta' }, h('h2', {}, 'Detalle'),
     h('div', { class: 'tabla' }, h('table', { class: 'lineas' },
       h('thead', {}, h('tr', {}, ['CABYS', 'Descripción', 'Cantidad', 'Unidad', 'Precio unit.', 'Descuento', 'IVA', 'Total', '', '']
         .map((t) => h('th', {}, t)))),
       cuerpoLineas)),
-    h('div', { class: 'acciones' }, h('button', { type: 'button', onclick: agregarLinea }, '+ Agregar línea'),
-      h('label', { class: 'check' }, servicio10, 'Cobrar impuesto de servicio 10% (restaurantes)'))),
+    h('div', { class: 'acciones' },
+      h('button', { type: 'button', class: 'primario', onclick: agregarDelCatalogo }, '+ Del catálogo'),
+      h('button', { type: 'button', onclick: () => agregarLinea() }, '+ Línea manual'),
+      h('label', { class: 'check' }, servicio10, 'Cobrar impuesto de servicio 10% (restaurantes)')),
+    avisoAgro),
   h('div', { class: 'campos dos' },
     h('section', { class: 'tarjeta' }, h('h2', {}, 'Condiciones y pago'),
       h('div', { class: 'campos' },

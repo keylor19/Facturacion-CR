@@ -1,0 +1,726 @@
+{
+  "name": "Facturación CR — autollenado y emisión",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 1. Autollenado por cédula\nGET `/webhook/facturacion/cliente?cedula=3101005744`\n\nDevuelve nombre, tipo, si está inscrito, actividades y el correo si es cliente guardado.\n\n**Antes de usar:** reemplace `SU-DOMINIO` y elija la credencial *Header Auth* (X-API-Key) en cada nodo HTTP.",
+        "height": 220,
+        "width": 520
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000001",
+      "name": "Nota 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "facturacion/cliente",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000002",
+      "name": "Webhook cliente",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "a1b2c3d4-0000-4000-8000-000000000003"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cedula = String($json.query.cedula || '').replace(/\\D/g, '');\nreturn [{ json: { cedula, valida: cedula.length >= 9 && cedula.length <= 12 } }];"
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000004",
+      "name": "Validar cédula",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000005",
+              "leftValue": "={{ $json.valida }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000006",
+      "name": "¿Cédula completa?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://SU-DOMINIO/api/v1/hacienda/contribuyentes/{{ $json.cedula }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000007",
+      "name": "Hacienda: contribuyente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://SU-DOMINIO/api/v1/catalogo/clientes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $('Validar cédula').first().json.cedula }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000008",
+      "name": "Mis clientes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const h = $('Hacienda: contribuyente').first().json;\nconst c = $('Mis clientes').first().json;\nconst cedula = $('Validar cédula').first().json.cedula;\nconst hacienda = h.statusCode === 200 ? h.body : null;\nconst guardado = c.statusCode === 200 && Array.isArray(c.body)\n  ? c.body.find((x) => x.numero_identificacion === cedula) : null;\nconst activas = (hacienda?.actividades || []).filter((a) => a.estado === 'A' || !a.estado);\nconst principal = activas.find((a) => a.tipo === 'P') || activas[0];\nconst situacion = hacienda?.situacion || {};\nreturn [{ json: {\n  encontrado: Boolean(hacienda || guardado),\n  inscrito: (situacion.estado || '').toLowerCase() === 'inscrito',\n  moroso: situacion.moroso === 'SI',\n  omiso: situacion.omiso === 'SI',\n  receptor: {\n    nombre: hacienda?.nombre || guardado?.nombre || null,\n    tipo_identificacion: hacienda?.tipoIdentificacion || guardado?.tipo_identificacion || null,\n    numero_identificacion: cedula,\n    correo: guardado?.correo || null,\n  },\n  codigo_actividad: guardado?.codigo_actividad || (principal ? String(principal.codigo).padStart(6, '0') : null),\n  actividades: activas.map((a) => ({ codigo: String(a.codigo).padStart(6, '0'), descripcion: a.descripcion, principal: a.tipo === 'P' })),\n  cliente_id: guardado?.id || null,\n  datos_guardados_por_falla_de_hacienda: Boolean(hacienda?._respaldo_local),\n  mensaje: h.statusCode === 404 ? 'No está inscrito en Hacienda'\n    : h.statusCode >= 400 ? (h.body?.detail || 'No se pudo consultar Hacienda') : null,\n} }];"
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000009",
+      "name": "Armar datos del cliente",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000010",
+      "name": "Responder cliente",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { encontrado: false, mensaje: 'La cédula debe tener entre 9 y 12 dígitos' } }];"
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000011",
+      "name": "Cédula incompleta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000012",
+      "name": "Responder cédula incompleta",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 2. Buscar producto o servicio\nGET `/webhook/facturacion/producto?q=martillo`\n\nPrimero los productos de la empresa (precio, IVA, existencia); además sugerencias del catálogo CABYS oficial.",
+        "height": 180,
+        "width": 520
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000013",
+      "name": "Nota 13",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "facturacion/producto",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000014",
+      "name": "Webhook producto",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        520
+      ],
+      "webhookId": "a1b2c3d4-0000-4000-8000-000000000015"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://SU-DOMINIO/api/v1/catalogo/productos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $json.query.q }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000016",
+      "name": "Mis productos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://SU-DOMINIO/api/v1/hacienda/cabys",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $('Webhook producto').first().json.query.q }}"
+            },
+            {
+              "name": "top",
+              "value": "10"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000017",
+      "name": "CABYS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const q = $('Webhook producto').first().json.query.q || '';\nconst p = $('Mis productos').first().json;\nconst c = $('CABYS').first().json;\nconst TARIFA = { 13: '08', 8: '07', 4: '04', 2: '03', 1: '02', 0.5: '09' };\nconst productos = (p.statusCode === 200 && Array.isArray(p.body) ? p.body : []).slice(0, 10).map((x) => ({\n  origen: 'mis_productos', producto_id: x.id, codigo: x.codigo, descripcion: x.descripcion,\n  codigo_cabys: x.codigo_cabys, unidad_medida: x.unidad_medida, precio_unitario: x.precio_unitario,\n  codigo_tarifa_iva: x.codigo_tarifa_iva, existencia: x.controla_inventario ? x.existencia : null,\n}));\nconst lista = c.statusCode === 200 ? (Array.isArray(c.body) ? c.body : c.body.cabys || []) : [];\nconst cabys = lista.slice(0, 10).map((x) => ({\n  origen: 'cabys', codigo_cabys: x.codigo, descripcion: x.descripcion, impuesto: x.impuesto,\n  codigo_tarifa_iva: TARIFA[Number(x.impuesto)] || null,\n}));\nreturn [{ json: { q, productos, cabys } }];"
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000018",
+      "name": "Armar resultados",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000019",
+      "name": "Responder productos",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 3. Emitir factura\nPOST `/webhook/facturacion/emitir` con el JSON de la factura (ver guía).\n\nEnvíe siempre `referencia_externa` única: si se reintenta, no se duplica la factura.",
+        "height": 180,
+        "width": 520
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000020",
+      "name": "Nota 20",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "facturacion/emitir",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000021",
+      "name": "Webhook emitir",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        920
+      ],
+      "webhookId": "a1b2c3d4-0000-4000-8000-000000000022"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://SU-DOMINIO/api/v1/facturas",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000023",
+      "name": "Emitir en el servicio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        920
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json;\nconst ok = r.statusCode === 200 || r.statusCode === 202;\nconst detalle = r.body?.detail;\nreturn [{ json: {\n  ok,\n  status: r.statusCode,\n  factura_id: ok ? r.body.factura_id : null,\n  clave: ok ? r.body.clave : null,\n  estado: ok ? r.body.estado : null,\n  documentos_disponibles: r.headers?.['x-documentos-disponibles'] ?? null,\n  error: ok ? null : (typeof detalle === 'string' ? detalle : JSON.stringify(detalle)),\n} }];"
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000024",
+      "name": "Resultado de la emisión",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        920
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000025",
+      "name": "Responder emisión",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        920
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 4. Avisos del servicio\nConfigure esta URL (de producción) en la ficha de la empresa → **Webhook**.\nEventos: comprobante.aceptado / rechazado, saldo.bajo, etc.\n\nRequiere `NODE_FUNCTION_ALLOW_BUILTIN=crypto` en n8n y pegar el secreto en el nodo *Verificar firma*.",
+        "height": 200,
+        "width": 520
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000026",
+      "name": "Nota 26",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        1080
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "facturacion/avisos",
+        "responseMode": "onReceived",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000027",
+      "name": "Webhook avisos",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        1320
+      ],
+      "webhookId": "a1b2c3d4-0000-4000-8000-000000000028"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst SECRETO = 'PEGUE_AQUI_EL_SECRETO_DEL_WEBHOOK';\nconst item = $input.first();\nconst firma = item.json.headers['x-facturacion-firma'] || '';\nlet cuerpo;\ntry {\n  cuerpo = await this.helpers.getBinaryDataBuffer(0, 'data');\n} catch (e) {\n  cuerpo = Buffer.from(JSON.stringify(item.json.body));\n}\nconst esperada = 'sha256=' + crypto.createHmac('sha256', SECRETO).update(cuerpo).digest('hex');\nconst valida = firma.length === esperada.length && crypto.timingSafeEqual(Buffer.from(firma), Buffer.from(esperada));\nreturn [{ json: { valida, evento: item.json.headers['x-facturacion-evento'], datos: item.json.body } }];"
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000029",
+      "name": "Verificar firma",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        1320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "a1b2c3d4-0000-4000-8000-000000000030",
+              "leftValue": "={{ $json.valida }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0000-4000-8000-000000000031",
+      "name": "¿Firma válida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        1320
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "a1b2c3d4-0000-4000-8000-000000000032",
+      "name": "Procesar aviso (WhatsApp, correo, CRM…)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        660,
+        1240
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "a1b2c3d4-0000-4000-8000-000000000033",
+      "name": "Descartar (firma inválida)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        660,
+        1400
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook cliente": {
+      "main": [
+        [
+          {
+            "node": "Validar cédula",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar cédula": {
+      "main": [
+        [
+          {
+            "node": "¿Cédula completa?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Cédula completa?": {
+      "main": [
+        [
+          {
+            "node": "Hacienda: contribuyente",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cédula incompleta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hacienda: contribuyente": {
+      "main": [
+        [
+          {
+            "node": "Mis clientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mis clientes": {
+      "main": [
+        [
+          {
+            "node": "Armar datos del cliente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar datos del cliente": {
+      "main": [
+        [
+          {
+            "node": "Responder cliente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cédula incompleta": {
+      "main": [
+        [
+          {
+            "node": "Responder cédula incompleta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook producto": {
+      "main": [
+        [
+          {
+            "node": "Mis productos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mis productos": {
+      "main": [
+        [
+          {
+            "node": "CABYS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CABYS": {
+      "main": [
+        [
+          {
+            "node": "Armar resultados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar resultados": {
+      "main": [
+        [
+          {
+            "node": "Responder productos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook emitir": {
+      "main": [
+        [
+          {
+            "node": "Emitir en el servicio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emitir en el servicio": {
+      "main": [
+        [
+          {
+            "node": "Resultado de la emisión",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resultado de la emisión": {
+      "main": [
+        [
+          {
+            "node": "Responder emisión",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook avisos": {
+      "main": [
+        [
+          {
+            "node": "Verificar firma",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar firma": {
+      "main": [
+        [
+          {
+            "node": "¿Firma válida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Firma válida?": {
+      "main": [
+        [
+          {
+            "node": "Procesar aviso (WhatsApp, correo, CRM…)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Descartar (firma inválida)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

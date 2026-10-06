@@ -13,7 +13,7 @@ from api.models.schemas import (
     UsuarioCrear, UsuarioResponse,
 )
 from api.security import Principal, autenticar, require_admin
-from api.services import auditoria, dos_pasos, limites, saldo, usuarios
+from api.services import auditoria, dos_pasos, limites, saldo, suscripciones, usuarios
 from config.settings import get_settings
 
 router = APIRouter(prefix="/api/v1", tags=["usuarios y sesiones"])
@@ -56,7 +56,8 @@ def yo(principal: Principal = Depends(autenticar), db: Session = Depends(get_db)
         empresas = [
             {"id": str(e.id), "nombre": e.nombre, "numero_identificacion": e.numero_identificacion,
              "ambiente": e.ambiente, "tiene_certificado": e.cert_p12_cifrado is not None,
-             "cert_vence": e.cert_vence, "saldo_documentos": saldos.get(e.id)}
+             "cert_vence": e.cert_vence, "saldo_documentos": saldos.get(e.id),
+             "facturacion_web": suscripciones.activo(db, e, "facturacion_web")}
             for e in lista
         ]
     return {

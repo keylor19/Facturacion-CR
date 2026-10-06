@@ -66,8 +66,28 @@ def main(argv=None):
 
     p = sub.add_parser("reiniciar-2fa", help="Quita la verificación en dos pasos de un usuario (perdió el teléfono)")
     p.add_argument("--email", required=True)
+    p = sub.add_parser("actualizar-hacienda",
+                       help="Refresca ya los datos de Hacienda guardados (contribuyentes, exoneraciones, CABYS...)")
+    p.add_argument("--limite", type=int, default=None, help="Máximo de registros a consultar")
+    p = sub.add_parser("cargar-cabys", help="Importa el catálogo CABYS oficial (Excel del BCCR)")
+    p.add_argument("--archivo", help="Excel ya descargado (si no, se descarga de CABYS_URL)")
+    p.add_argument("--url", help="Otra dirección del Excel (versión nueva del catálogo)")
 
     args = parser.parse_args(argv)
+
+    if args.comando == "cargar-cabys":
+        from api.services import catalogo_cabys
+        if args.archivo:
+            with open(args.archivo, "rb") as f:
+                print(catalogo_cabys.importar_excel(f.read()))
+        else:
+            print(catalogo_cabys.descargar_e_importar(args.url))
+        return 0
+
+    if args.comando == "actualizar-hacienda":
+        from api.services import hacienda_publico
+        print(hacienda_publico.actualizar_registros(limite=args.limite))
+        return 0
 
     if args.comando == "reiniciar-2fa":
         from sqlalchemy import select

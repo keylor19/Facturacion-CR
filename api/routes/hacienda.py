@@ -1,8 +1,11 @@
 """
 Consultas a Hacienda:
-  - Servicios públicos: contribuyentes y actividades, exoneraciones, CABYS, tipo de cambio.
+  - Servicios públicos: contribuyentes y actividades, exoneraciones, CABYS,
+    productores agropecuarios y de pesca, tipo de cambio (actual e histórico).
   - API de comprobantes con las credenciales del emisor: estado y listado.
 """
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from api.models.database import Emisor
@@ -40,8 +43,13 @@ def consultar_contribuyente(identificacion: str):
 
 
 @router.get("/exoneraciones/{autorizacion}", dependencies=[Depends(autenticar)])
-def consultar_exoneracion(autorizacion: str):
+def consultar_exoneracion(
+    autorizacion: str,
+    detalle: bool = Query(default=False, description="Incluir descripción y tarifa de los CABYS autorizados"),
+):
     """Datos de una exoneración (porcentaje, vigencia, institución, CABYS autorizados)."""
+    if detalle:
+        return _publico(hacienda_publico.exoneracion_con_cabys, autorizacion)
     return _publico(hacienda_publico.exoneracion, autorizacion)
 
 
@@ -53,6 +61,27 @@ def buscar_cabys(
 ):
     """Catálogo de bienes y servicios (CABYS) con su tarifa de IVA."""
     return _publico(hacienda_publico.cabys, texto=q, codigo=codigo, top=top)
+
+
+@router.get("/productores/{identificacion}", dependencies=[Depends(autenticar)])
+def consultar_productor(identificacion: str):
+    """Registro como productor agropecuario (MAG) o de pesca y acuicultura (INCOPESCA)."""
+    return _publico(hacienda_publico.productor, identificacion)
+
+
+@router.get("/tipo-cambio", dependencies=[Depends(autenticar)])
+def consultar_tipos_de_cambio():
+    """Dólar (compra y venta) y euro publicados por Hacienda."""
+    return _publico(hacienda_publico.tipos_de_cambio)
+
+
+@router.get("/tipo-cambio/USD/historico", dependencies=[Depends(autenticar)])
+def consultar_tipo_cambio_historico(
+    desde: date = Query(description="Fecha inicial (AAAA-MM-DD)"),
+    hasta: date = Query(description="Fecha final (AAAA-MM-DD)"),
+):
+    """Tipo de cambio diario del dólar entre dos fechas."""
+    return _publico(hacienda_publico.tipo_cambio_historico, desde, hasta)
 
 
 @router.get("/tipo-cambio/{moneda}", dependencies=[Depends(autenticar)])
