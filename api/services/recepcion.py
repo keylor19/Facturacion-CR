@@ -56,7 +56,8 @@ def _decimal(valor: str | None) -> Decimal:
         raise EmisionError(422, f"Monto inválido en el XML: {valor!r}")
 
 
-def registrar_documento(db: Session, emisor: Emisor, xml: bytes, respuesta: bytes | None = None) -> DocumentoRecibido:
+def registrar_documento(db: Session, emisor: Emisor, xml: bytes, respuesta: bytes | None = None,
+                        origen: str = "manual") -> DocumentoRecibido:
     """Valida y guarda un comprobante recibido de un proveedor."""
     if len(xml) > MAX_BYTES_XML:
         raise EmisionError(413, "El XML excede el tamaño máximo")
@@ -124,6 +125,7 @@ def registrar_documento(db: Session, emisor: Emisor, xml: bytes, respuesta: byte
         firma_valida=verificar_firma_local(xml_txt, externo=True),
         xml_original=xml_txt,
         xml_respuesta_proveedor=respuesta_txt,
+        origen=origen,
     )
     db.add(doc)
     db.commit()

@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from api.routes import auth, borradores, cajas, callback, catalogo, emisores, facturas, hacienda, health, recepcion, reportes, saldo
+from api.routes import auth, borradores, buzon, cajas, callback, catalogo, emisores, facturas, hacienda, health, recepcion, reportes, saldo
 from config.settings import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -63,6 +63,7 @@ if settings.cors_origins:
 app.include_router(auth.router)
 app.include_router(facturas.router)
 app.include_router(recepcion.router)
+app.include_router(buzon.router)
 app.include_router(reportes.router)
 app.include_router(saldo.router)
 app.include_router(saldo.admin)

@@ -14,10 +14,12 @@ from sqlalchemy import func, select
 
 from workers.celery_app import celery_app
 from api.models.database import (
-    SessionLocal, Emisor, Factura, DocumentoRecibido, FacturaEvento, EstadoFactura, Paquete,
+    SessionLocal, BuzonCorreo, Emisor, Factura, DocumentoRecibido, FacturaEvento, EstadoFactura, Paquete,
     ESTADOS_REENVIABLES, ESTADOS_FINALES, utcnow,
 )
-from api.services import catalogo_cabys, correo, emisores, hacienda_client, hacienda_publico, inventario, suscripciones, webhooks
+from api.services import (
+    buzon, catalogo_cabys, correo, emisores, hacienda_client, hacienda_publico, inventario, suscripciones, webhooks,
+)
 from api.services.fechas import zona_cr
 from api.services.hacienda_auth import HaciendaAuthError
 from config.settings import get_settings
@@ -484,3 +486,21 @@ def actualizar_datos_hacienda():
     resultado["registros"] = hacienda_publico.actualizar_registros()
     logger.info("Datos de Hacienda actualizados: %s", resultado)
     return resultado
+
+
+@celery_app.task
+def revisar_buzones():
+    """Cada 5 minutos: importa las facturas de proveedores que llegaron a los buzones de correo."""
+    db = SessionLocal()
+    try:
+        ids = db.scalars(select(BuzonCorreo.id).join(Emisor, Emisor.id == BuzonCorreo.emisor_id)
+                         .where(BuzonCorreo.activo.is_(True), Emisor.activo.is_(True))).all()
+        resultado = {}
+        for buzon_id in ids:
+            b = db.get(BuzonCorreo, buzon_id)
+            resultado[str(buzon_id)] = buzon.revisar_seguro(db, b)
+            if resultado[str(buzon_id)].get("importados"):
+                logger.info("Buzón %s: %s", buzon_id, resultado[str(buzon_id)])
+        return resultado
+    finally:
+        db.close()

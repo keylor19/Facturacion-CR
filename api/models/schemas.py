@@ -631,6 +631,19 @@ class DocumentoRecibidoResponse(BaseModel):
     estado: Optional[str]
     estado_hacienda: Optional[str]
     mensaje_hacienda: Optional[str]
+    detalle_mensaje: Optional[str] = None
+    origen: str = Field(default="manual", description="manual (subido), correo (buzón automático) o api")
+
+
+class BuzonCorreoRequest(BaseModel):
+    servidor: str = Field(min_length=3, max_length=200, pattern=r"^[A-Za-z0-9.-]+$",
+                          description="Servidor IMAP, p. ej. imap.gmail.com u outlook.office365.com")
+    puerto: int = Field(default=993, ge=1, le=65535, description="IMAP con SSL (normalmente 993)")
+    usuario: str = Field(min_length=3, max_length=200)
+    password: Optional[str] = Field(default=None, min_length=1, max_length=200,
+                                    description="Vacío al editar = conservar la actual")
+    carpeta: str = Field(default="INBOX", min_length=1, max_length=200)
+    activo: bool = True
 
 
 # --------------------------------------------------------------------------

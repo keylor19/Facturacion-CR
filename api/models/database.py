@@ -280,6 +280,7 @@ class DocumentoRecibido(Base):
     total_impuesto = Column(Numeric(18, 5), nullable=False, default=0)
     total_comprobante = Column(Numeric(18, 5), nullable=False, default=0)
     firma_valida = Column(Boolean, nullable=True)
+    origen = Column(String(10), nullable=False, default="manual")   # manual | correo | api
     xml_original = Column(Text, nullable=False)
     xml_respuesta_proveedor = Column(Text, nullable=True)  # MensajeHacienda que envió el proveedor
 
@@ -312,6 +313,31 @@ class DocumentoRecibido(Base):
                            order_by="FacturaEvento.created_at")
 
     __table_args__ = (UniqueConstraint("emisor_id", "clave", name="uq_recibido_emisor_clave"),)
+
+
+class BuzonCorreo(Base):
+    """
+    Buzón IMAP donde la empresa recibe las facturas de sus proveedores. Se revisa
+    periódicamente y los XML adjuntos se registran como documentos recibidos.
+    Se recuerda el último UID leído para no volver a procesar los mismos correos.
+    """
+    __tablename__ = "buzones_correo"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False, unique=True)
+    servidor = Column(String(200), nullable=False)
+    puerto = Column(Integer, nullable=False, default=993)
+    usuario = Column(String(200), nullable=False)
+    password_cifrado = Column(LargeBinary, nullable=False)
+    carpeta = Column(String(200), nullable=False, default="INBOX")
+    activo = Column(Boolean, nullable=False, default=True)
+    uid_validity = Column(BigInteger, nullable=True)
+    ultimo_uid = Column(BigInteger, nullable=True)
+    ultima_revision = Column(DateTime(timezone=True), nullable=True)
+    ultimo_error = Column(Text, nullable=True)
+    documentos_importados = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class FacturaEvento(Base):

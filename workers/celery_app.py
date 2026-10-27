@@ -26,6 +26,11 @@ celery_app.conf.update(
             "task": "workers.tasks.reintentar_pendientes",
             "schedule": 300.0,
         },
+        # Importa las facturas de proveedores que llegaron a los buzones de correo
+        "revisar-buzones": {
+            "task": "workers.tasks.revisar_buzones",
+            "schedule": 300.0,
+        },
         # Consulta el estado de lo ENVIADO cuyo callback nunca llegó
         "consultar-enviados": {
             "task": "workers.tasks.consultar_enviados",

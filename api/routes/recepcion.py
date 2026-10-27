@@ -30,6 +30,7 @@ def _respuesta(d: DocumentoRecibido) -> DocumentoRecibidoResponse:
         condicion_impuesto=d.condicion_impuesto, monto_impuesto_acreditar=d.monto_impuesto_acreditar,
         consecutivo_receptor=d.consecutivo_receptor, estado=d.estado.value if d.estado else None,
         estado_hacienda=d.estado_hacienda, mensaje_hacienda=d.mensaje_hacienda,
+        detalle_mensaje=d.detalle_mensaje, origen=d.origen,
     )
 
 
@@ -40,9 +41,9 @@ def _buscar(db: Session, emisor: Emisor, doc_id: UUID) -> DocumentoRecibido:
     return doc
 
 
-def _registrar(db, emisor, xml: bytes, respuesta: bytes | None) -> DocumentoRecibidoResponse:
+def _registrar(db, emisor, xml: bytes, respuesta: bytes | None, origen: str = "manual") -> DocumentoRecibidoResponse:
     try:
-        return _respuesta(recepcion.registrar_documento(db, emisor, xml, respuesta))
+        return _respuesta(recepcion.registrar_documento(db, emisor, xml, respuesta, origen))
     except EmisionError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 
@@ -58,7 +59,7 @@ def registrar_documento(
             if payload.respuesta_hacienda_base64 else None
     except EmisionError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail)
-    return _registrar(db, emisor, xml, respuesta)
+    return _registrar(db, emisor, xml, respuesta, "api")
 
 
 @router.post("/archivo", response_model=DocumentoRecibidoResponse, status_code=201)
