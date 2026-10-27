@@ -12,9 +12,9 @@ from collections import defaultdict
 from decimal import Decimal
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, lazyload
 
-from api.models.database import Factura, MovimientoInventario, Producto
+from api.models.database import Categoria, ComboComponente, Factura, MovimientoInventario, Producto
 from api.models.schemas import FacturaRequest, MovimientoRequest, ProductoResponse, TIPOS_COMPROBANTE
 
 # tipo de comprobante -> (signo, tipo de movimiento)
@@ -45,13 +45,59 @@ def a_respuesta(p: Producto) -> ProductoResponse:
         codigo_tarifa_iva=p.codigo_tarifa_iva, costo_unitario=p.costo_unitario,
         controla_inventario=p.controla_inventario, existencia=p.existencia or Decimal("0"),
         existencia_minima=p.existencia_minima, bajo_minimo=bajo_minimo(p), activo=p.activo,
+        categoria_id=str(p.categoria_id) if p.categoria_id else None,
+        categoria=p.categoria.nombre if p.categoria else None,
+        es_combo=bool(p.es_combo),
+        componentes=[{"producto_id": str(c.producto_id), "codigo": c.producto.codigo, "descripcion": c.producto.descripcion,
+                      "cantidad": c.cantidad} for c in p.componentes] if p.es_combo else [],
+        combo_disponible=combo_disponible(p),
     )
+
+
+def combo_disponible(p: Producto) -> Decimal | None:
+    """Cuántos combos alcanzan con las existencias de sus componentes (None si ninguno controla inventario)."""
+    if not p.es_combo:
+        return None
+    limites = [(c.producto.existencia or Decimal("0")) // c.cantidad
+               for c in p.componentes if c.producto.controla_inventario]
+    return max(min(limites), Decimal("0")) if limites else None
+
+
+def fijar_categoria(db: Session, emisor_id: str, p: Producto, categoria_id: str | None) -> None:
+    if not categoria_id:
+        p.categoria_id = None
+        return
+    cat = db.get(Categoria, categoria_id)
+    if cat is None or cat.emisor_id != emisor_id:
+        raise InventarioError("La categoría no existe")
+    p.categoria_id = cat.id
+    p.categoria = cat
+
+
+def fijar_componentes(db: Session, emisor_id: str, p: Producto, componentes) -> None:
+    """Convierte el producto en combo (o deja de serlo con una lista vacía). Un combo no lleva inventario propio."""
+    ids = [c.producto_id for c in componentes]
+    if len(set(ids)) != len(ids):
+        raise InventarioError("Un producto aparece dos veces en el combo; sume las cantidades en una sola línea")
+    productos = {x.id: x for x in db.scalars(select(Producto).where(Producto.emisor_id == emisor_id, Producto.id.in_(ids)))}
+    for c in componentes:
+        x = productos.get(c.producto_id)
+        if x is None or not x.activo:
+            raise InventarioError("Un componente del combo no existe en el catálogo")
+        if x.es_combo or x.id == p.id:
+            raise InventarioError(f"{x.codigo} es un combo: un combo no puede contener otro combo")
+    p.componentes = [ComboComponente(producto_id=c.producto_id, cantidad=c.cantidad, producto=productos[c.producto_id])
+                     for c in componentes]
+    p.es_combo = bool(componentes)
+    if p.es_combo:
+        p.controla_inventario = False
 
 
 def _bloquear(db: Session, emisor_id: str, ids) -> dict[str, Producto]:
     """Bloquea las filas (en orden fijo para evitar interbloqueos) durante la transacción."""
     filas = db.scalars(select(Producto).where(Producto.emisor_id == emisor_id, Producto.id.in_(list(ids)))
-                       .order_by(Producto.id).with_for_update())
+                       .options(lazyload(Producto.categoria))   # FOR UPDATE no admite el LEFT JOIN de la categoría
+                       .order_by(Producto.id).with_for_update(of=Producto))
     return {p.id: p for p in filas}
 
 
@@ -90,6 +136,14 @@ def aplicar_documento(db: Session, emisor_id: str, factura: Factura, datos: Fact
         if ln.producto_id:
             totales[ln.producto_id] += ln.cantidad
 
+    # Combos: se mueven las existencias de sus componentes
+    combos = {pid: totales.pop(pid) for pid in list(totales) if productos[pid].es_combo}
+    if combos:
+        componentes = list(db.scalars(select(ComboComponente).where(ComboComponente.combo_id.in_(list(combos)))))
+        for c in componentes:
+            totales[c.producto_id] += combos[c.combo_id] * c.cantidad
+        productos.update(_bloquear(db, emisor_id, {c.producto_id for c in componentes} - set(productos)))
+
     if signo < 0:
         faltantes = [
             f"{p.codigo} {p.descripcion} (hay {_n(p.existencia)}, se requieren {_n(c)})"
@@ -121,12 +175,15 @@ def revertir_documento(db: Session, factura: Factura) -> int:
 
 
 def crear_producto(db: Session, emisor_id: str, datos, usuario: str | None) -> Producto:
-    campos = datos.model_dump(exclude={"existencia_inicial", "activo"}, exclude_none=True)
-    p = Producto(emisor_id=emisor_id, existencia=Decimal("0"), activo=True, **campos)
+    campos = datos.model_dump(exclude={"existencia_inicial", "activo", "categoria_id", "componentes"}, exclude_none=True)
+    p = Producto(emisor_id=emisor_id, existencia=Decimal("0"), activo=True, es_combo=False, **campos)
     if p.es_servicio is None:
         p.es_servicio = False
     if p.controla_inventario is None:
         p.controla_inventario = False
+    fijar_categoria(db, emisor_id, p, datos.categoria_id)
+    if datos.componentes:
+        fijar_componentes(db, emisor_id, p, datos.componentes)
     db.add(p)
     if p.controla_inventario and datos.existencia_inicial > 0:
         _mover(db, p, datos.existencia_inicial, "entrada", nota="Existencia inicial", usuario=usuario,

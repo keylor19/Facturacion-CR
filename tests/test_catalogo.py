@@ -215,6 +215,9 @@ def test_modulo_desactivado_bloquea_al_usuario_de_la_empresa(db, emisor, app_cli
     assert r.json()["facturacion_web"] is False
     yo = app_client.get("/api/v1/auth/yo", headers=h).json()
     assert yo["empresas"][0]["facturacion_web"] is False
+    # Configuración > Información de la cuenta: datos del emisor en solo lectura
+    assert yo["empresas"][0]["codigo_actividad"] == emisor.codigo_actividad
+    assert yo["empresas"][0]["correo"] == emisor.correo
     for metodo, ruta in [("get", "/api/v1/catalogo/productos"), ("get", "/api/v1/catalogo/clientes"),
                          ("get", "/api/v1/inventario/movimientos")]:
         assert getattr(app_client, metodo)(ruta, headers=h).status_code == 403, ruta

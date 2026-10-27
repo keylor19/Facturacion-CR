@@ -57,7 +57,12 @@ def yo(principal: Principal = Depends(autenticar), db: Session = Depends(get_db)
             {"id": str(e.id), "nombre": e.nombre, "numero_identificacion": e.numero_identificacion,
              "ambiente": e.ambiente, "tiene_certificado": e.cert_p12_cifrado is not None,
              "cert_vence": e.cert_vence, "saldo_documentos": saldos.get(e.id),
-             "facturacion_web": suscripciones.activo(db, e, "facturacion_web")}
+             "facturacion_web": suscripciones.activo(db, e, "facturacion_web"),
+             # Datos de solo lectura para Configuración > Información de la cuenta
+             "tipo_identificacion": e.tipo_identificacion, "nombre_comercial": e.nombre_comercial,
+             "codigo_actividad": e.codigo_actividad, "correo": e.correo, "telefono": e.telefono,
+             "provincia": e.provincia, "canton": e.canton, "distrito": e.distrito, "otras_senas": e.otras_senas,
+             "tiene_logo": e.logo is not None}
             for e in lista
         ]
     return {

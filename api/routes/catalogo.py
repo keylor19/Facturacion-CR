@@ -11,13 +11,14 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from api.models.database import Cliente, Emisor, MovimientoInventario, Producto, get_db
+from api.models.database import Categoria, Cliente, Descuento, Emisor, MovimientoInventario, Producto, get_db
 from api.models.schemas import (
-    ClienteDatos, ClienteResponse, MovimientoRequest, ProductoActualizar, ProductoCrear, ProductoResponse,
+    CategoriaRequest, ClienteDatos, ClienteResponse, DescuentoRequest, MovimientoRequest, ProductoActualizar,
+    ProductoCrear, ProductoResponse,
 )
 from api.security import Principal, autenticar, emisor_actual, emisor_facturacion_web
 from api.services import auditoria, inventario
-from api.services.fechas import zona_cr
+from api.services.fechas import ahora_cr, zona_cr
 from api.services.reportes import _csv
 
 router = APIRouter(prefix="/api/v1", tags=["facturación en línea: catálogos e inventario"])
@@ -127,11 +128,17 @@ def listar_productos(
     solo_inventario: bool = Query(default=False, description="Solo los que controlan inventario"),
     bajo_minimo: bool = Query(default=False, description="Solo los que están en o por debajo del mínimo"),
     limite: int = Query(default=500, ge=1, le=2000),
+    categoria_id: UUID | None = Query(default=None),
+    solo_combos: bool = False,
     emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db),
 ):
     query = select(Producto).where(Producto.emisor_id == emisor.id).order_by(Producto.descripcion).limit(limite)
     if not incluir_inactivos:
         query = query.where(Producto.activo.is_(True))
+    if categoria_id:
+        query = query.where(Producto.categoria_id == str(categoria_id))
+    if solo_combos:
+        query = query.where(Producto.es_combo.is_(True))
     if solo_inventario or bajo_minimo:
         query = query.where(Producto.controla_inventario.is_(True))
     if bajo_minimo:
@@ -149,7 +156,11 @@ def obtener_producto(producto_id: UUID, emisor: Emisor = Depends(emisor_facturac
 @router.post("/catalogo/productos", response_model=ProductoResponse, status_code=201)
 def crear_producto(payload: ProductoCrear, principal: Principal = Depends(autenticar),
                    emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
-    p = inventario.crear_producto(db, emisor.id, payload, _quien(db, principal))
+    try:
+        p = inventario.crear_producto(db, emisor.id, payload, _quien(db, principal))
+    except inventario.InventarioError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc))
     try:
         db.commit()
     except IntegrityError:
@@ -163,10 +174,22 @@ def actualizar_producto(producto_id: UUID, payload: ProductoActualizar,
                         emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     """La existencia no se edita aquí: use /inventario/movimientos (entrada, salida o ajuste)."""
     p = _producto(db, emisor, producto_id)
-    for campo, valor in payload.model_dump(exclude_unset=True).items():
+    for campo, valor in payload.model_dump(exclude_unset=True, exclude={"categoria_id", "componentes"}).items():
         if valor is None and campo not in ("costo_unitario", "existencia_minima"):
             continue
         setattr(p, campo, valor)
+    try:
+        if "categoria_id" in payload.model_fields_set:
+            inventario.fijar_categoria(db, emisor.id, p, payload.categoria_id)
+        if payload.componentes is not None:
+            if payload.componentes and p.controla_inventario and p.existencia:
+                raise inventario.InventarioError("El producto tiene existencia: ajústela a cero antes de convertirlo en combo")
+            inventario.fijar_componentes(db, emisor.id, p, payload.componentes)
+        if p.es_combo:
+            p.controla_inventario = False
+    except inventario.InventarioError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc))
     try:
         db.commit()
     except IntegrityError:
@@ -179,6 +202,125 @@ def actualizar_producto(producto_id: UUID, payload: ProductoActualizar,
 def eliminar_producto(producto_id: UUID, emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     """Lo quita del catálogo; su historial de inventario se conserva."""
     _producto(db, emisor, producto_id).activo = False
+    db.commit()
+
+
+# --- Categorías -----------------------------------------------------------------
+
+def _categoria(db: Session, emisor: Emisor, categoria_id: UUID) -> Categoria:
+    c = db.get(Categoria, str(categoria_id))
+    if c is None or c.emisor_id != emisor.id:
+        raise HTTPException(status_code=404, detail="Categoría no encontrada")
+    return c
+
+
+def _categoria_respuesta(db: Session, c: Categoria) -> dict:
+    productos = db.scalar(select(func.count()).where(Producto.categoria_id == c.id, Producto.activo.is_(True)))
+    return {"id": str(c.id), "nombre": c.nombre, "productos": productos}
+
+
+@router.get("/catalogo/categorias")
+def listar_categorias(emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
+    lista = db.scalars(select(Categoria).where(Categoria.emisor_id == emisor.id).order_by(Categoria.nombre))
+    return [_categoria_respuesta(db, c) for c in lista]
+
+
+@router.post("/catalogo/categorias", status_code=201)
+def crear_categoria(payload: CategoriaRequest, emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
+    c = Categoria(emisor_id=emisor.id, nombre=payload.nombre.strip())
+    db.add(c)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Ya existe una categoría con ese nombre")
+    return _categoria_respuesta(db, c)
+
+
+@router.put("/catalogo/categorias/{categoria_id}")
+def renombrar_categoria(categoria_id: UUID, payload: CategoriaRequest,
+                        emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
+    c = _categoria(db, emisor, categoria_id)
+    c.nombre = payload.nombre.strip()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Ya existe una categoría con ese nombre")
+    return _categoria_respuesta(db, c)
+
+
+@router.delete("/catalogo/categorias/{categoria_id}", status_code=204)
+def eliminar_categoria(categoria_id: UUID, emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
+    """Los productos quedan sin categoría; los descuentos de la categoría se eliminan."""
+    db.delete(_categoria(db, emisor, categoria_id))
+    db.commit()
+
+
+# --- Descuentos -----------------------------------------------------------------
+
+def _descuento_respuesta(d: Descuento) -> dict:
+    return {
+        "id": str(d.id), "nombre": d.nombre, "tipo": d.tipo, "valor": d.valor, "alcance": d.alcance,
+        "categoria_id": str(d.categoria_id) if d.categoria_id else None, "categoria": d.categoria.nombre if d.categoria else None,
+        "producto_id": str(d.producto_id) if d.producto_id else None,
+        "producto": f"{d.producto.codigo} · {d.producto.descripcion}" if d.producto else None,
+        "cantidad_minima": d.cantidad_minima, "codigo_descuento": d.codigo_descuento,
+        "desde": d.desde, "hasta": d.hasta, "activo": d.activo,
+    }
+
+
+def _validar_descuento(db: Session, emisor: Emisor, payload: DescuentoRequest) -> dict:
+    """Verifica que la categoría o el producto sean de la empresa y limpia el que no aplica."""
+    datos = payload.model_dump()
+    if payload.alcance == "categoria":
+        _categoria(db, emisor, UUID(payload.categoria_id))
+    else:
+        datos["categoria_id"] = None
+    if payload.alcance == "producto":
+        _producto(db, emisor, UUID(payload.producto_id))
+    else:
+        datos["producto_id"] = None
+    return datos
+
+
+@router.get("/catalogo/descuentos")
+def listar_descuentos(vigentes: bool = Query(default=False, description="Solo activos y dentro de su vigencia hoy"),
+                      emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
+    query = select(Descuento).where(Descuento.emisor_id == emisor.id).order_by(Descuento.nombre)
+    if vigentes:
+        hoy = ahora_cr().date()
+        query = query.where(Descuento.activo.is_(True), or_(Descuento.desde.is_(None), Descuento.desde <= hoy),
+                            or_(Descuento.hasta.is_(None), Descuento.hasta >= hoy))
+    return [_descuento_respuesta(d) for d in db.scalars(query)]
+
+
+@router.post("/catalogo/descuentos", status_code=201)
+def crear_descuento(payload: DescuentoRequest, emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
+    d = Descuento(emisor_id=emisor.id, **_validar_descuento(db, emisor, payload))
+    db.add(d)
+    db.commit()
+    return _descuento_respuesta(d)
+
+
+@router.put("/catalogo/descuentos/{descuento_id}")
+def actualizar_descuento(descuento_id: UUID, payload: DescuentoRequest,
+                         emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
+    d = db.get(Descuento, str(descuento_id))
+    if d is None or d.emisor_id != emisor.id:
+        raise HTTPException(status_code=404, detail="Descuento no encontrado")
+    for campo, valor in _validar_descuento(db, emisor, payload).items():
+        setattr(d, campo, valor)
+    db.commit()
+    return _descuento_respuesta(d)
+
+
+@router.delete("/catalogo/descuentos/{descuento_id}", status_code=204)
+def eliminar_descuento(descuento_id: UUID, emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
+    d = db.get(Descuento, str(descuento_id))
+    if d is None or d.emisor_id != emisor.id:
+        raise HTTPException(status_code=404, detail="Descuento no encontrado")
+    db.delete(d)
     db.commit()
 
 

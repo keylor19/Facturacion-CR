@@ -1,6 +1,7 @@
 import { api, sesion } from '../api.js';
 import { h, vaciar, fecha, tabla, modal, conBoton, toast, campo, opciones, aviso, dinero, alCompletarCedula, avisoContribuyente, avisoNoInscrito } from '../dom.js';
 import { TIPOS_IDENTIFICACION } from '../catalogos.js';
+import { selectorUbicacion } from '../ubicacion.js';
 import { contexto, cargarContexto, enrutar } from '../app.js';
 import { kpisSaldo, tablaPaquetes, tablaServicios } from './saldo.js';
 
@@ -76,14 +77,21 @@ const CAMPOS = [
   ['codigo_actividad', 'Código de actividad', 'text', 6],
   ['correo', 'Correo', 'email', 160],
   ['telefono', 'Teléfono', 'text', 20],
-  ['provincia', 'Provincia (1-7)', 'text', 1],
-  ['canton', 'Cantón (2 dígitos)', 'text', 2],
-  ['distrito', 'Distrito (2 dígitos)', 'text', 2],
+  ['provincia', 'Provincia'],
+  ['canton', 'Cantón'],
+  ['distrito', 'Distrito'],
   ['barrio', 'Barrio', 'text', 50, true],
   ['otras_senas', 'Otras señas', 'text', 250],
   ['proveedor_sistemas', 'Proveedor de sistemas (vacío = la misma empresa)', 'text', 12, true],
   ['registro_fiscal_8707', 'Registro fiscal Ley 8707 (solo si vende bebidas alcohólicas)', 'text', 12, true],
 ];
+
+// Controles del formulario de empresa; la ubicación se elige por nombre.
+function entradasEmpresa(valores = {}) {
+  const entradas = Object.fromEntries(CAMPOS.map(([k, , t, max]) => [k, h('input', { type: t, maxlength: String(max), value: valores[k] || '' })]));
+  const { provincia, canton, distrito } = selectorUbicacion(valores);
+  return Object.assign(entradas, { provincia, canton, distrito });
+}
 
 // Campos obligatorios a la vista; los que solo aplican a algunas empresas, plegados
 // (se abren solos si ya tienen valor).
@@ -122,7 +130,7 @@ export async function vistaEmpresas(cont) {
 function dialogoNueva() {
   const tipo = h('select', {}, opciones({ '02': TIPOS_IDENTIFICACION['02'], '01': TIPOS_IDENTIFICACION['01'], '03': 'DIMEX', '04': 'NITE' }, '02'));
   const numero = h('input', { type: 'text', maxlength: '12' });
-  const entradas = Object.fromEntries(CAMPOS.map(([k, , t, max]) => [k, h('input', { type: t, maxlength: String(max) })]));
+  const entradas = entradasEmpresa();
   const ambiente = h('select', {}, h('option', { value: 'stag' }, 'Pruebas (stag)'), h('option', { value: 'prod' }, 'Producción'));
 
   // Al escribir la identificación se consultan los datos en Hacienda y se precargan.
@@ -264,7 +272,7 @@ export async function vistaDetalleEmpresa(cont, id) {
   const refrescar = () => enrutar();
 
   // Datos generales
-  const entradas = Object.fromEntries(CAMPOS.map(([k, , t, max]) => [k, h('input', { type: t, maxlength: String(max), value: e[k] || '' })]));
+  const entradas = entradasEmpresa(e);
   const ambiente = h('select', {}, h('option', { value: 'stag', selected: e.ambiente === 'stag' }, 'Pruebas (stag)'),
     h('option', { value: 'prod', selected: e.ambiente === 'prod' }, 'Producción'));
   const activo = h('input', { type: 'checkbox', checked: e.activo });

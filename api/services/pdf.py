@@ -62,7 +62,14 @@ def _logo(emisor, max_ancho: float = 45 * mm, max_alto: float = 20 * mm):
         return None
 
 
-def generar_pdf(factura: Factura) -> bytes:
+def generar_pdf(factura: Factura, titulo_documento: str | None = None, notas_extra: list[str] | None = None) -> bytes:
+    """
+    Con titulo_documento se imprime un documento sin valor fiscal (proforma):
+    sin clave, QR ni estado ante Hacienda. `factura` puede ser cualquier objeto
+    con los mismos atributos (ver services/borradores.py).
+    """
+    fiscal = titulo_documento is None
+    titulo_documento = titulo_documento or TIPOS_COMPROBANTE.get(factura.tipo_documento, "Comprobante electrónico")
     emisor = factura.emisor
     datos = factura.json_original or {}
     moneda = factura.moneda
@@ -75,7 +82,7 @@ def generar_pdf(factura: Factura) -> bytes:
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=LETTER, leftMargin=15 * mm, rightMargin=15 * mm,
                             topMargin=12 * mm, bottomMargin=12 * mm,
-                            title=f"{TIPOS_COMPROBANTE.get(factura.tipo_documento, 'Comprobante')} {factura.numero_consecutivo}")
+                            title=f"{titulo_documento} {factura.numero_consecutivo}")
     partes = []
 
     # --- Encabezado: emisor + tipo de documento ---
@@ -89,8 +96,8 @@ def generar_pdf(factura: Factura) -> bytes:
     ]
     fecha_local = factura.fecha_emision.astimezone(zona_cr())
     doc_txt = [
-        Paragraph(escape(TIPOS_COMPROBANTE.get(factura.tipo_documento, "Comprobante electrónico")), titulo),
-        Paragraph(f"<b>Consecutivo:</b> {factura.numero_consecutivo}", ParagraphStyle("r", parent=normal, alignment=2)),
+        Paragraph(escape(titulo_documento), titulo),
+        Paragraph(f"<b>{'Consecutivo' if fiscal else 'Número'}:</b> {factura.numero_consecutivo}", ParagraphStyle("r", parent=normal, alignment=2)),
         Paragraph(f"<b>Fecha:</b> {fecha_local:%d/%m/%Y %H:%M}", ParagraphStyle("r2", parent=normal, alignment=2)),
     ]
     logo = _logo(emisor)
@@ -100,8 +107,9 @@ def generar_pdf(factura: Factura) -> bytes:
     encabezado.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
     partes += [encabezado, Spacer(0, 4 * mm)]
 
-    partes.append(Paragraph(f"<b>Clave numérica:</b> {factura.clave}", normal))
-    partes.append(Spacer(0, 3 * mm))
+    if fiscal:
+        partes.append(Paragraph(f"<b>Clave numérica:</b> {factura.clave}", normal))
+        partes.append(Spacer(0, 3 * mm))
 
     # --- Receptor / condiciones ---
     etiqueta = "Proveedor" if factura.tipo_documento == "08" else "Receptor"
@@ -159,14 +167,19 @@ def generar_pdf(factura: Factura) -> bytes:
         notas.append(_p(f"Notas: {datos['notas']}", normal))
     for ref in datos.get("referencias") or []:
         notas.append(_p(f"Referencia: documento {ref.get('numero')} ({ref.get('razon') or ''})", normal))
-    notas.append(_p(f"Estado ante Hacienda: {factura.estado.value}", normal))
-    pie = Table([[_qr(factura.clave), notas, tabla_tot]], colWidths=[35 * mm, 76 * mm, 75 * mm])
+    notas += [_p(n, normal) for n in notas_extra or []]
+    if fiscal:
+        notas.append(_p(f"Estado ante Hacienda: {factura.estado.value}", normal))
+        pie = Table([[_qr(factura.clave), notas, tabla_tot]], colWidths=[35 * mm, 76 * mm, 75 * mm])
+    else:
+        pie = Table([[notas, tabla_tot]], colWidths=[111 * mm, 75 * mm])
     pie.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
     partes += [pie, Spacer(0, 6 * mm)]
 
     partes.append(_p(
         "Comprobante electrónico emitido conforme a la normativa vigente de la Dirección General de Tributación "
-        "de Costa Rica (versión 4.4). Consulte la validez del comprobante con su clave numérica.",
+        "de Costa Rica (versión 4.4). Consulte la validez del comprobante con su clave numérica." if fiscal else
+        "Documento sin valor fiscal: no sustituye al comprobante electrónico, que se emite al confirmar la venta.",
         ParagraphStyle("pie", parent=normal, fontSize=7, textColor=colors.grey),
     ))
 

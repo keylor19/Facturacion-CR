@@ -102,7 +102,8 @@ def _fecha_emision(datos: FacturaRequest) -> datetime:
 
 
 def emitir(
-    db: Session, emisor: Emisor, datos: FacturaRequest, factura_origen_id: str | None = None
+    db: Session, emisor: Emisor, datos: FacturaRequest, factura_origen_id: str | None = None,
+    caja_id: str | None = None,
 ) -> tuple[Factura, bool]:
     """
     Crea, firma y guarda el comprobante (estado PENDIENTE). Devuelve
@@ -191,6 +192,7 @@ def emitir(
         fecha_emision=fecha_emision,
         referencia_externa=datos.referencia_externa,
         factura_origen_id=factura_origen_id,
+        caja_id=caja_id,
         receptor_nombre=contraparte.nombre if contraparte else None,
         receptor_identificacion=(contraparte.numero_identificacion or contraparte.identificacion_extranjero) if contraparte else None,
         receptor_tipo_identificacion=contraparte.tipo_identificacion if contraparte else None,

@@ -9,8 +9,8 @@ import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Column, String, Date, DateTime, Numeric, Integer, BigInteger, Text, ForeignKey, Enum,
-    LargeBinary, PrimaryKeyConstraint, UniqueConstraint, create_engine, select,
+    Boolean, Column, String, Date, DateTime, Numeric, Integer, BigInteger, Text, ForeignKey, Enum, Index,
+    LargeBinary, PrimaryKeyConstraint, UniqueConstraint, create_engine, select, text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB, insert as pg_insert
 from sqlalchemy.orm import relationship, declarative_base, sessionmaker, Session
@@ -182,6 +182,8 @@ class Factura(Base):
     referencia_externa = Column(String(100), nullable=True)
     # Documento que esta nota anula/corrige (si se generó con /anular)
     factura_origen_id = Column(UUID(as_uuid=False), ForeignKey("facturas.id"), nullable=True)
+    # Turno de caja del punto de venta en que se cobró (null = emitido fuera del POS)
+    caja_id = Column(UUID(as_uuid=False), ForeignKey("cajas.id"), nullable=True, index=True)
 
     # Contraparte: receptor (o proveedor en la factura de compra 08)
     receptor_nombre = Column(String(200), nullable=True)
@@ -454,10 +456,67 @@ class Producto(Base):
     existencia = Column(Numeric(18, 3), nullable=False, default=0)
     existencia_minima = Column(Numeric(18, 3), nullable=True)
     activo = Column(Boolean, nullable=False, default=True)
+    categoria_id = Column(UUID(as_uuid=False), ForeignKey("categorias.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Combo: se vende como una línea y descuenta las existencias de sus componentes
+    es_combo = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
+    categoria = relationship("Categoria", lazy="joined")
+    componentes = relationship("ComboComponente", foreign_keys="ComboComponente.combo_id", cascade="all, delete-orphan",
+                               lazy="selectin", order_by="ComboComponente.id")
+
     __table_args__ = (UniqueConstraint("emisor_id", "codigo", name="uq_producto_emisor_codigo"),)
+
+
+class Categoria(Base):
+    """Agrupa productos para buscarlos, reportarlos y aplicarles descuentos."""
+    __tablename__ = "categorias"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False, index=True)
+    nombre = Column(String(60), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (UniqueConstraint("emisor_id", "nombre", name="uq_categoria_emisor_nombre"),)
+
+
+class ComboComponente(Base):
+    """Producto y cantidad que lleva un combo."""
+    __tablename__ = "combo_componentes"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    combo_id = Column(UUID(as_uuid=False), ForeignKey("productos.id", ondelete="CASCADE"), nullable=False, index=True)
+    producto_id = Column(UUID(as_uuid=False), ForeignKey("productos.id"), nullable=False)
+    cantidad = Column(Numeric(18, 3), nullable=False)
+
+    producto = relationship("Producto", foreign_keys=[producto_id], lazy="joined")
+
+
+class Descuento(Base):
+    """
+    Promoción que el panel aplica sola al facturar: porcentaje o monto por
+    unidad, para todo, una categoría o un producto, con vigencia y cantidad mínima.
+    """
+    __tablename__ = "descuentos"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False, index=True)
+    nombre = Column(String(100), nullable=False)
+    tipo = Column(String(10), nullable=False)                 # porcentaje | monto (por unidad, sin IVA)
+    valor = Column(Numeric(18, 5), nullable=False)
+    alcance = Column(String(10), nullable=False)              # todos | categoria | producto
+    categoria_id = Column(UUID(as_uuid=False), ForeignKey("categorias.id", ondelete="CASCADE"), nullable=True)
+    producto_id = Column(UUID(as_uuid=False), ForeignKey("productos.id", ondelete="CASCADE"), nullable=True)
+    cantidad_minima = Column(Numeric(18, 3), nullable=True)
+    codigo_descuento = Column(String(2), nullable=False, default="06")   # código de Hacienda (06 promocional)
+    desde = Column(Date, nullable=True)
+    hasta = Column(Date, nullable=True)
+    activo = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    categoria = relationship("Categoria", lazy="joined")
+    producto = relationship("Producto", lazy="joined")
 
 
 class MovimientoInventario(Base):
@@ -530,6 +589,82 @@ class TipoCambioDiario(Base):
     eur_colones = Column(Numeric(12, 4), nullable=True)
     eur_dolares = Column(Numeric(12, 6), nullable=True)
     actualizado_en = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class Borrador(Base):
+    """
+    Comprobante aún sin emitir: proforma (cotización numerada, con PDF y vigencia)
+    o documento preliminar (borrador que se retoma después). Guarda el mismo
+    cuerpo de POST /facturas; al emitirlo queda enlazado a la factura generada.
+    """
+    __tablename__ = "borradores"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False, index=True)
+    clase = Column(String(10), nullable=False)                 # proforma | preliminar
+    numero = Column(Integer, nullable=True)                    # solo proformas (consecutivo propio)
+    tipo_documento = Column(String(2), nullable=False, default="01")
+    receptor_nombre = Column(String(200), nullable=True)
+    receptor_identificacion = Column(String(20), nullable=True)
+    receptor_correo = Column(String(160), nullable=True)
+    moneda = Column(String(3), nullable=False, default="CRC")
+    monto_impuesto = Column(Numeric(18, 5), nullable=True)     # null si los datos aún no son válidos
+    monto_total = Column(Numeric(18, 5), nullable=True)
+    datos = Column(JSONB, nullable=False)
+    vence = Column(Date, nullable=True)
+    estado = Column(String(10), nullable=False, default="ABIERTO")  # ABIERTO | FACTURADO | ANULADO
+    factura_id = Column(UUID(as_uuid=False), ForeignKey("facturas.id"), nullable=True)
+    creado_por = Column(String(200), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (UniqueConstraint("emisor_id", "clase", "numero", name="uq_borrador_numero"),)
+
+
+class Caja(Base):
+    """
+    Turno de caja del punto de venta: se abre con un fondo, registra las ventas
+    y los movimientos de efectivo, y se cierra con el arqueo (monto contado).
+    Solo puede haber una caja abierta por sucursal y terminal.
+    """
+    __tablename__ = "cajas"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False, index=True)
+    sucursal = Column(Integer, nullable=False, default=1)
+    terminal = Column(Integer, nullable=False, default=1)
+    estado = Column(String(10), nullable=False, default="ABIERTA")   # ABIERTA | CERRADA
+    monto_apertura = Column(Numeric(18, 2), nullable=False, default=0)
+    abierta_por = Column(String(200), nullable=True)
+    abierta_en = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    monto_contado = Column(Numeric(18, 2), nullable=True)
+    cerrada_por = Column(String(200), nullable=True)
+    cerrada_en = Column(DateTime(timezone=True), nullable=True)
+    notas = Column(Text, nullable=True)
+    resumen = Column(JSONB, nullable=True)        # arqueo calculado al cerrar (no cambia después)
+
+    movimientos = relationship("MovimientoCaja", back_populates="caja", cascade="all, delete-orphan",
+                               order_by="MovimientoCaja.fecha")
+
+    __table_args__ = (
+        Index("uq_caja_abierta", "emisor_id", "sucursal", "terminal", unique=True,
+              postgresql_where=text("estado = 'ABIERTA'")),
+    )
+
+
+class MovimientoCaja(Base):
+    """Entrada o salida de efectivo que no es una venta (fondo extra, pago a proveedor, retiro)."""
+    __tablename__ = "movimientos_caja"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    caja_id = Column(UUID(as_uuid=False), ForeignKey("cajas.id", ondelete="CASCADE"), nullable=False, index=True)
+    tipo = Column(String(10), nullable=False)      # entrada | salida
+    monto = Column(Numeric(18, 2), nullable=False)
+    motivo = Column(String(200), nullable=False)
+    usuario = Column(String(200), nullable=True)
+    fecha = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    caja = relationship("Caja", back_populates="movimientos")
 
 
 class ConsecutivoContador(Base):

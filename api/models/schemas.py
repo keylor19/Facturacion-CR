@@ -6,7 +6,7 @@ Esto es lo que tus clientes (frontend, POS, ERP, otros sistemas) van a consumir.
 versión vigente publicada por Hacienda.
 """
 import re
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Literal, Optional
 
@@ -767,6 +767,11 @@ class ClienteResponse(ClienteDatos):
     activo: bool
 
 
+class ComponenteCombo(BaseModel):
+    producto_id: str = Field(pattern=PATRON_UUID)
+    cantidad: Decimal = Field(gt=0, max_digits=18, decimal_places=3)
+
+
 class ProductoActualizar(BaseModel):
     codigo: Optional[str] = Field(default=None, min_length=1, max_length=20)
     codigo_cabys: Optional[str] = Field(default=None, pattern=r"^\d{13}$")
@@ -780,6 +785,10 @@ class ProductoActualizar(BaseModel):
     controla_inventario: Optional[bool] = None
     existencia_minima: Optional[Decimal] = Field(default=None, ge=0, max_digits=18, decimal_places=3)
     activo: Optional[bool] = None
+    categoria_id: Optional[str] = Field(default=None, description="Vacío ('') para quitar la categoría")
+    componentes: Optional[List[ComponenteCombo]] = Field(
+        default=None, max_length=50,
+        description="Productos que forman el combo; lista vacía para que deje de ser combo")
 
     @field_validator("codigo_tarifa_iva")
     @classmethod
@@ -815,6 +824,42 @@ class ProductoResponse(BaseModel):
     existencia_minima: Optional[Decimal]
     bajo_minimo: bool
     activo: bool
+    categoria_id: Optional[str] = None
+    categoria: Optional[str] = None
+    es_combo: bool = False
+    componentes: List[dict] = Field(default_factory=list, description="[{producto_id, codigo, descripcion, cantidad}]")
+    combo_disponible: Optional[Decimal] = Field(default=None, description="Combos que alcanzan con las existencias")
+
+
+class CategoriaRequest(BaseModel):
+    nombre: str = Field(min_length=1, max_length=60)
+
+
+class DescuentoRequest(BaseModel):
+    nombre: str = Field(min_length=1, max_length=100)
+    tipo: Literal["porcentaje", "monto"] = Field(description="porcentaje del precio, o monto por unidad (sin IVA)")
+    valor: Decimal = Field(gt=0, max_digits=18, decimal_places=5)
+    alcance: Literal["todos", "categoria", "producto"]
+    categoria_id: Optional[str] = Field(default=None, pattern=PATRON_UUID)
+    producto_id: Optional[str] = Field(default=None, pattern=PATRON_UUID)
+    cantidad_minima: Optional[Decimal] = Field(default=None, gt=0, max_digits=18, decimal_places=3)
+    # Sin 01/02 (regalías) ni 99 (exige describir la naturaleza): esos se digitan en la línea
+    codigo_descuento: Literal["03", "04", "05", "06", "07", "08", "09"] = "06"
+    desde: Optional[date] = None
+    hasta: Optional[date] = None
+    activo: bool = True
+
+    @model_validator(mode="after")
+    def validar(self):
+        if self.tipo == "porcentaje" and self.valor > 100:
+            raise ValueError("El porcentaje no puede ser mayor que 100")
+        if self.alcance == "categoria" and not self.categoria_id:
+            raise ValueError("Indique la categoría")
+        if self.alcance == "producto" and not self.producto_id:
+            raise ValueError("Indique el producto")
+        if self.desde and self.hasta and self.hasta < self.desde:
+            raise ValueError("La fecha final es anterior a la inicial")
+        return self
 
 
 class MovimientoRequest(BaseModel):
@@ -832,6 +877,66 @@ class MovimientoRequest(BaseModel):
         if self.tipo != "ajuste" and self.cantidad <= 0:
             raise ValueError("La cantidad debe ser mayor que cero")
         return self
+
+
+# --------------------------------------------------------------------------
+# Punto de venta (cajas)
+# --------------------------------------------------------------------------
+
+class CajaAbrir(BaseModel):
+    sucursal: int = Field(default=1, ge=1, le=999)
+    terminal: int = Field(default=1, ge=1, le=99_999)
+    monto_apertura: Decimal = Field(default=Decimal("0"), ge=0, max_digits=18, decimal_places=2,
+                                    description="Fondo de caja en efectivo (colones)")
+    notas: Optional[str] = Field(default=None, max_length=500)
+
+
+class MovimientoCajaRequest(BaseModel):
+    tipo: Literal["entrada", "salida"]
+    monto: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
+    motivo: str = Field(min_length=1, max_length=200)
+
+
+class CajaCerrar(BaseModel):
+    monto_contado: Decimal = Field(ge=0, max_digits=18, decimal_places=2, description="Efectivo contado al cerrar")
+    notas: Optional[str] = Field(default=None, max_length=500)
+
+
+# --------------------------------------------------------------------------
+# Proformas y documentos preliminares
+# --------------------------------------------------------------------------
+
+class BorradorCrear(BaseModel):
+    clase: Literal["proforma", "preliminar"] = Field(
+        description="proforma = cotización numerada con PDF; preliminar = borrador para terminar después")
+    datos: dict = Field(description="Mismo cuerpo que POST /facturas. Un preliminar puede estar incompleto.")
+    vence: Optional[date] = Field(default=None, description="Vigencia de la proforma (por defecto 15 días)")
+
+
+class BorradorActualizar(BaseModel):
+    datos: Optional[dict] = None
+    vence: Optional[date] = None
+
+
+class BorradorResponse(BaseModel):
+    id: str
+    clase: str
+    numero: Optional[int]
+    tipo_documento: str
+    receptor_nombre: Optional[str]
+    receptor_identificacion: Optional[str]
+    receptor_correo: Optional[str]
+    moneda: str
+    monto_impuesto: Optional[Decimal]
+    monto_total: Optional[Decimal]
+    vence: Optional[date]
+    estado: str = Field(description="ABIERTO, VENCIDO (proforma fuera de vigencia), FACTURADO o ANULADO")
+    factura_id: Optional[str]
+    creado_por: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    errores: Optional[str] = Field(default=None, description="Qué falta para poder emitirlo (null = listo)")
+    datos: Optional[dict] = None
 
 
 # --------------------------------------------------------------------------

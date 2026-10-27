@@ -1,10 +1,13 @@
 """Reportes para contadores: resumen de IVA y libros de ventas/compras."""
-from fastapi import APIRouter, Depends, Query, Response
+from datetime import date
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from api.models.database import Emisor, get_db
 from api.security import emisor_actual
-from api.services import reportes
+from api.services import descargas, reportes
 
 router = APIRouter(prefix="/api/v1/reportes", tags=["reportes"])
 
@@ -45,3 +48,34 @@ def estadisticas(anio: int = Anio, mes: int = Mes, emisor: Emisor = Depends(emis
                  db: Session = Depends(get_db)):
     """Resumen del mes para el tablero: comprobantes por estado y tipo, ventas e IVA."""
     return reportes.estadisticas(db, emisor, anio, mes)
+
+
+@router.get("/documentos.zip")
+def documentos_zip(
+    desde: date, hasta: date,
+    emitidos: bool = True, recibidos: bool = True,
+    pdf: bool = Query(default=False, description="Incluir el PDF de cada comprobante emitido (más lento)"),
+    tipo_documento: str | None = Query(default=None, pattern=r"^\d{2}$", description="Solo un tipo de comprobante emitido"),
+    emisor: Emisor = Depends(emisor_actual), db: Session = Depends(get_db),
+):
+    """XML firmados, respuestas de Hacienda, PDF opcional e índice en Excel de un rango de fechas."""
+    if hasta < desde:
+        raise HTTPException(status_code=422, detail="La fecha final es anterior a la inicial")
+    if (hasta - desde).days > 366:
+        raise HTTPException(status_code=422, detail="El rango máximo es de un año")
+    if not emitidos and not recibidos:
+        raise HTTPException(status_code=422, detail="Elija emitidos, recibidos o ambos")
+    try:
+        archivo = descargas.generar_zip(db, emisor, desde, hasta, emitidos=emitidos, recibidos=recibidos,
+                                        con_pdf=pdf, tipo_documento=tipo_documento)
+    except descargas.DescargaError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    nombre = f"comprobantes-{emisor.numero_identificacion}-{desde:%Y%m%d}-{hasta:%Y%m%d}.zip"
+    return StreamingResponse(_trozos(archivo), media_type="application/zip",
+                             headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
+
+
+def _trozos(archivo, tamano: int = 64 * 1024):
+    with archivo:
+        while trozo := archivo.read(tamano):
+            yield trozo

@@ -83,9 +83,9 @@ def informar_saldo(db: Session, emisor: Emisor, response: Response) -> None:
         response.headers["X-Documentos-Disponibles"] = str(saldo.disponible(db, emisor.id))
 
 
-def _emitir(db, emisor, datos, response: Response, factura_origen_id=None) -> FacturaResponse:
+def _emitir(db, emisor, datos, response: Response, factura_origen_id=None, caja_id=None) -> FacturaResponse:
     try:
-        factura, creada = emision.emitir(db, emisor, datos, factura_origen_id=factura_origen_id)
+        factura, creada = emision.emitir(db, emisor, datos, factura_origen_id=factura_origen_id, caja_id=caja_id)
     except emision.EmisionError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail)
     informar_saldo(db, emisor, response)

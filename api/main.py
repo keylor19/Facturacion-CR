@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from api.routes import auth, callback, catalogo, emisores, facturas, hacienda, health, recepcion, reportes, saldo
+from api.routes import auth, borradores, cajas, callback, catalogo, emisores, facturas, hacienda, health, recepcion, reportes, saldo
 from config.settings import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -67,6 +67,8 @@ app.include_router(reportes.router)
 app.include_router(saldo.router)
 app.include_router(saldo.admin)
 app.include_router(catalogo.router)
+app.include_router(borradores.router)
+app.include_router(cajas.router)
 app.include_router(hacienda.router)
 app.include_router(emisores.router)
 app.include_router(callback.router)

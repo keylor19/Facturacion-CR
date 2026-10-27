@@ -16,7 +16,10 @@ def test_raiz_redirige_al_panel(app_client):
 
 
 def test_archivos_del_panel(app_client):
-    for ruta in ("js/app.js", "js/api.js", "js/dom.js", "js/vistas/emitir.js", "css/app.css"):
+    for ruta in ("js/app.js", "js/api.js", "js/dom.js", "js/csv.js", "js/vistas/emitir.js", "js/vistas/facturaRapida.js",
+                 "js/vistas/pagos.js", "js/vistas/configuracion.js", "js/vistas/borradores.js",
+                 "js/vistas/puntoVenta.js", "js/vistas/descargas.js",
+                 "js/promociones.js", "js/vistas/promociones.js", "css/app.css"):
         assert app_client.get(f"/panel/{ruta}").status_code == 200, ruta
 
 

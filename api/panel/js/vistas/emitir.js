@@ -1,9 +1,11 @@
-import { api } from '../api.js';
+import { abrir, api } from '../api.js';
 import { h, vaciar, dinero, modal, conBoton, toast, campo, opciones, tabla, aviso, alCompletarCedula, avisoContribuyente, avisoNoInscrito, avisoRespaldo } from '../dom.js';
 import {
   TIPOS_DOCUMENTO, TIPOS_IDENTIFICACION, CONDICIONES_VENTA, MEDIOS_PAGO, TARIFAS_IVA, DESCUENTOS, UNIDADES,
   INSTITUCIONES_EXONERACION, TIPOS_DOC_REFERENCIA, CODIGOS_REFERENCIA, SITUACIONES,
 } from '../catalogos.js';
+import { selectorUbicacion } from '../ubicacion.js';
+import { descuentosVigentes, mejorDescuento } from '../promociones.js';
 
 const TARIFA_POR_PORCENTAJE = { 13: '08', 8: '07', 4: '04', 2: '03', 1: '02', 0.5: '09' };
 const tarifasOpciones = (sel) => Object.entries(TARIFAS_IVA).map(([k, [t]]) => h('option', { value: k, selected: k === sel }, t));
@@ -11,7 +13,7 @@ const tarifasOpciones = (sel) => Object.entries(TARIFAS_IVA).map(([k, [t]]) => h
 // ---------------------------------------------------------------------------
 // Persona (receptor o proveedor) con búsqueda en Hacienda
 // ---------------------------------------------------------------------------
-function dialogoElegirCliente(alElegir) {
+export function dialogoElegirCliente(alElegir) {
   const q = h('input', { type: 'search', placeholder: 'Nombre o identificación' });
   const resultados = h('div');
   const buscar = async () => {
@@ -29,7 +31,7 @@ function dialogoElegirCliente(alElegir) {
   buscar().catch((err) => toast(err.message, 'error'));
 }
 
-function dialogoElegirProducto(alElegir) {
+export function dialogoElegirProducto(alElegir) {
   const q = h('input', { type: 'search', placeholder: 'Código, descripción o CABYS' });
   const resultados = h('div');
   const cant = (v) => Number(v).toLocaleString('es-CR', { maximumFractionDigits: 3 });
@@ -58,10 +60,11 @@ function bloquePersona(titulo, { conUbicacion = false, conCatalogo = false } = {
   const correo = h('input', { type: 'email' });
   const actividad = h('select', {}, h('option', { value: '' }, '— (opcional)'));
   const info = h('div');
+  const lugar = selectorUbicacion();
   const ubic = {
-    provincia: h('input', { type: 'text', maxlength: '1', placeholder: '1' }),
-    canton: h('input', { type: 'text', maxlength: '2', placeholder: '01' }),
-    distrito: h('input', { type: 'text', maxlength: '2', placeholder: '01' }),
+    provincia: lugar.provincia,
+    canton: lugar.canton,
+    distrito: lugar.distrito,
     otras_senas: h('input', { type: 'text', maxlength: '250' }),
   };
 
@@ -78,7 +81,10 @@ function bloquePersona(titulo, { conUbicacion = false, conCatalogo = false } = {
       vaciar(actividad, h('option', { value: '' }, '— (opcional)'),
         h('option', { value: cl.codigo_actividad, selected: true }, cl.codigo_actividad));
     }
-    if (conUbicacion) for (const k of Object.keys(ubic)) ubic[k].value = cl[k] || '';
+    if (conUbicacion) {
+      lugar.fijar(cl);
+      ubic.otras_senas.value = cl.otras_senas || '';
+    }
     guardarCliente.checked = false;
     vaciar(info, aviso(`Cliente del catálogo: ${cl.nombre}`, 'ok'));
   };
@@ -155,13 +161,27 @@ function bloquePersona(titulo, { conUbicacion = false, conCatalogo = false } = {
     },
     actividad: () => actividad.value || null,
     identificacion: () => numero.value.replace(/\D/g, ''),
+    // Carga una persona guardada (proforma o preliminar) sin volver a consultar Hacienda
+    fijar(p, codigoActividad = null) {
+      if (!p) return;
+      tipo.value = p.tipo_identificacion || '01';
+      numero.value = p.numero_identificacion || '';
+      nombre.value = p.nombre || '';
+      correo.value = p.correo || '';
+      const act = codigoActividad || p.codigo_actividad;
+      if (act) vaciar(actividad, h('option', { value: '' }, '— (opcional)'), h('option', { value: act, selected: true }, act));
+      if (conUbicacion && p.ubicacion) {
+        lugar.fijar(p.ubicacion);
+        ubic.otras_senas.value = p.ubicacion.otras_senas || '';
+      }
+    },
   };
 }
 
 // ---------------------------------------------------------------------------
 // Línea de detalle
 // ---------------------------------------------------------------------------
-function crearLinea(alCambiar, alQuitar, { receptorId = () => null, exoneracion = () => null } = {}) {
+function crearLinea(alCambiar, alQuitar, { receptorId = () => null, exoneracion = () => null, descuentos = () => [] } = {}) {
   const c = {
     cabys: h('input', { type: 'text', maxlength: '13', placeholder: '13 dígitos', size: '14' }),
     descripcion: h('input', { type: 'text', maxlength: '200' }),
@@ -298,6 +318,22 @@ function crearLinea(alCambiar, alQuitar, { receptorId = () => null, exoneracion 
     h('td', {}, h('button', { type: 'button', class: 'chico', title: 'Opciones', onclick: () => extra.classList.toggle('oculto') }, '⚙')),
     h('td', {}, h('button', { type: 'button', class: 'chico peligro', title: 'Quitar', onclick: () => { fila.remove(); extra.remove(); alQuitar(linea); } }, '✕')));
 
+  // Descuento automático del producto del catálogo; se recalcula con la cantidad
+  // y deja de aplicarse si el usuario digita otro descuento.
+  let promo = null;
+  const infoPromo = h('div', { class: 'suave' });
+  const aplicarPromo = () => {
+    if (!promo) return;
+    const d = mejorDescuento(descuentos(), promo, c.cantidad.value || 0, c.precio.value || 0);
+    c.descuento.value = d ? String(d.monto) : '0';
+    if (d) c.codigoDescuento.value = d.codigo;
+    infoPromo.textContent = d ? `Descuento: ${d.nombre}` : '';
+  };
+  c.cantidad.addEventListener('input', aplicarPromo);
+  c.precio.addEventListener('input', aplicarPromo);
+  c.descuento.addEventListener('input', () => { promo = null; infoPromo.textContent = ''; });
+  infoProducto.after(infoPromo);
+
   [c.cantidad, c.precio, c.descuento, c.tarifa, c.noSujeto, c.fabrica, c.asumido, c.exoTarifa, c.factor]
     .forEach((el) => el.addEventListener('input', alCambiar));
 
@@ -315,7 +351,9 @@ function crearLinea(alCambiar, alQuitar, { receptorId = () => null, exoneracion 
       c.tarifa.value = p.codigo_tarifa_iva;
       infoProducto.textContent = p.controla_inventario
         ? `${p.codigo} · existencia ${Number(p.existencia).toLocaleString('es-CR', { maximumFractionDigits: 3 })}`
-        : p.codigo;
+        : p.es_combo && p.combo_disponible !== null ? `${p.codigo} · combo, alcanzan ${Number(p.combo_disponible)}` : p.codigo;
+      promo = p;
+      aplicarPromo();
       aplicarExoneracion(true);
       c.cantidad.focus();
       c.cantidad.select();
@@ -330,6 +368,34 @@ function crearLinea(alCambiar, alQuitar, { receptorId = () => null, exoneracion 
       (c.descripcion.value ? c.precio : c.descripcion).focus();
     },
     aplicarExoneracion: () => aplicarExoneracion(false),
+    // Inverso de valor(): carga una línea guardada en una proforma o preliminar
+    fijar(p) {
+      productoId = p.producto_id || null;
+      c.cabys.value = p.codigo_cabys || '';
+      c.descripcion.value = p.descripcion || '';
+      c.cantidad.value = p.cantidad ?? '1';
+      if (UNIDADES[p.unidad_medida]) c.unidad.value = p.unidad_medida;
+      c.precio.value = p.precio_unitario ?? '';
+      c.descuento.value = p.descuento ?? '0';
+      if (p.codigo_descuento) c.codigoDescuento.value = p.codigo_descuento;
+      if (p.codigo_tarifa_iva) c.tarifa.value = p.codigo_tarifa_iva;
+      c.codigoComercial.value = p.codigo_comercial || '';
+      infoProducto.textContent = p.codigo_comercial || '';
+      c.partida.value = p.partida_arancelaria || '';
+      c.noSujeto.checked = !!p.no_sujeto;
+      c.asumido.checked = !!p.impuesto_asumido_emisor;
+      c.fabrica.value = p.iva_cobrado_fabrica || '';
+      c.factor.value = p.impuestos?.[0]?.factor_calculo_iva || '';
+      const ex = p.exoneracion;
+      if (ex) {
+        c.exoAut.value = ex.numero_documento || '';
+        c.exoTipo.value = ex.tipo_documento || '';
+        if (ex.nombre_institucion) c.exoInst.value = ex.nombre_institucion;
+        c.exoFecha.value = String(ex.fecha_emision || '').slice(0, 10);
+        c.exoTarifa.value = ex.tarifa_exonerada ?? '';
+      }
+      alCambiar();
+    },
     calculo() {
       const bruto = Number(c.cantidad.value || 0) * Number(c.precio.value || 0);
       const subtotal = bruto - Number(c.descuento.value || 0);
@@ -390,8 +456,9 @@ export function dialogoCabys(alElegir) {
 // ---------------------------------------------------------------------------
 // Formulario
 // ---------------------------------------------------------------------------
-export async function vistaEmitir(cont) {
-  const tipo = h('select', {}, opciones(TIPOS_DOCUMENTO, '01'));
+export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
+  const descuentos = await descuentosVigentes();
+  const tipo = h('select', {}, opciones(TIPOS_DOCUMENTO, TIPOS_DOCUMENTO[tipoInicial] ? tipoInicial : '01'));
   const sucursal = h('input', { type: 'number', min: '1', max: '999', value: '1' });
   const terminal = h('input', { type: 'number', min: '1', max: '99999', value: '1' });
   const situacion = h('select', {}, Object.entries(SITUACIONES).map(([k, v]) => h('option', { value: k }, `${k} · ${v}`)));
@@ -551,7 +618,7 @@ export async function vistaEmitir(cont) {
   };
   const agregarLinea = () => {
     const l = crearLinea(recalcular, (x) => { lineas.splice(lineas.indexOf(x), 1); recalcular(); },
-      { receptorId: receptor.identificacion, exoneracion: () => exoCliente });
+      { receptorId: receptor.identificacion, exoneracion: () => exoCliente, descuentos: () => descuentos });
     lineas.push(l);
     cuerpoLineas.append(...l.filas);
     recalcular();
@@ -594,50 +661,137 @@ export async function vistaEmitir(cont) {
   [tipo, situacion, condicion].forEach((el) => el.addEventListener('change', actualizarVisibilidad));
   actualizarVisibilidad();
 
-  const emitir = h('button', { type: 'submit', class: 'primario' }, 'Firmar y enviar a Hacienda');
+  // Cuerpo de POST /facturas con lo digitado (también es lo que se guarda en proformas y preliminares)
+  const armarDatos = () => {
+    const t = tipo.value;
+    const datos = {
+      tipo_documento: t, sucursal: Number(sucursal.value), terminal: Number(terminal.value),
+      condicion_venta: condicion.value, moneda: moneda.value,
+      productos: lineas.map((l) => l.valor()),
+      medios_pago: medioFilas.map(({ t: tp, m }) => (m.value ? { tipo: tp.value, monto: m.value } : { tipo: tp.value })),
+      situacion: situacion.value,
+    };
+    if (refExterna.value.trim()) datos.referencia_externa = refExterna.value.trim();
+    if (plazo.value && !campoPlazo.classList.contains('oculto')) datos.plazo_credito = Number(plazo.value);
+    if (tipoCambio.value && moneda.value !== 'CRC') datos.tipo_cambio = tipoCambio.value;
+    if (situacion.value !== '1') datos.fecha_emision = fechaEmision.value ? `${fechaEmision.value}:00` : null;
+    if (notas.value.trim()) datos.notas = notas.value.trim();
+    if (ivaDevuelto.value && !campoDevuelto.classList.contains('oculto')) datos.iva_devuelto = ivaDevuelto.value;
+    if (servicio10.checked) datos.otros_cargos = [{ tipo_documento: '06', detalle: 'Impuesto de servicio 10%', porcentaje: '10' }];
+    if (t === '08') {
+      datos.proveedor = proveedor.valor();
+    } else {
+      datos.receptor = receptor.valor();
+      if (receptor.actividad()) datos.codigo_actividad_receptor = receptor.actividad();
+    }
+    if (!seccionRef.classList.contains('oculto')) {
+      datos.referencia = {
+        tipo_documento: ref.tipo.value, numero: ref.numero.value.trim() || null,
+        fecha_emision: ref.fecha.value ? `${ref.fecha.value}:00` : null, codigo: ref.codigo.value, razon: ref.razon.value.trim() || null,
+      };
+    }
+    return datos;
+  };
+
+  // Inverso de armarDatos(): carga una proforma o un preliminar guardado
+  const cargarDatos = (d) => {
+    tipo.value = TIPOS_DOCUMENTO[d.tipo_documento] ? d.tipo_documento : '01';
+    sucursal.value = d.sucursal || 1;
+    terminal.value = d.terminal || 1;
+    situacion.value = d.situacion || '1';
+    if (d.fecha_emision) fechaEmision.value = String(d.fecha_emision).slice(0, 16);
+    refExterna.value = d.referencia_externa || '';
+    condicion.value = d.condicion_venta || '01';
+    plazo.value = d.plazo_credito || '';
+    moneda.value = d.moneda || 'CRC';
+    tipoCambio.value = d.tipo_cambio || '';
+    notas.value = d.notas || '';
+    ivaDevuelto.value = d.iva_devuelto || '';
+    servicio10.checked = (d.otros_cargos || []).some((o) => o.tipo_documento === '06');
+    if (d.tipo_documento === '08') proveedor.fijar(d.proveedor);
+    else receptor.fijar(d.receptor, d.codigo_actividad_receptor);
+    lineas.forEach((l) => l.filas.forEach((f) => f.remove()));
+    lineas.length = 0;
+    (d.productos || []).forEach((p) => agregarLinea().fijar(p));
+    if (!lineas.length) agregarLinea();
+    medios.replaceChildren();
+    medioFilas.length = 0;
+    (d.medios_pago?.length ? d.medios_pago : [{ tipo: '01' }]).forEach((mp) => {
+      agregarMedio();
+      const fila = medioFilas[medioFilas.length - 1];
+      fila.t.value = mp.tipo;
+      fila.m.value = mp.monto || '';
+    });
+    if (d.referencia) {
+      ref.tipo.value = d.referencia.tipo_documento || ref.tipo.value;
+      ref.numero.value = d.referencia.numero || '';
+      ref.fecha.value = String(d.referencia.fecha_emision || '').slice(0, 16);
+      ref.codigo.value = d.referencia.codigo || ref.codigo.value;
+      ref.razon.value = d.referencia.razon || '';
+    }
+    actualizarVisibilidad();
+    recalcular();
+  };
+
+  const borrador = modo.borrador || null;
+  const esProforma = modo.proforma || borrador?.clase === 'proforma';
+  if (borrador) cargarDatos(borrador.datos);
+
+  const mostrarError = (err) => {
+    vaciar(mensaje, h('div', { class: 'aviso error' }, err.message));
+    mensaje.scrollIntoView({ behavior: 'smooth' });
+  };
+  const exoneracionDeOtro = () => {
+    if (tipo.value === '08' || !exoCliente?.identificacion || receptor.identificacion() === exoCliente.identificacion) return false;
+    vaciar(mensaje, aviso(`La exoneración ${exoCliente.autorizacion} es de la identificación ${exoCliente.identificacion}; cambie el cliente o quite la exoneración.`, 'error'));
+    return true;
+  };
+
+  // Guarda como proforma o preliminar. Un preliminar que pasa a proforma se elimina.
+  const guardarComo = (boton, clase) => conBoton(boton, async () => {
+    vaciar(mensaje);
+    if (exoneracionDeOtro()) return;
+    const datos = armarDatos();
+    let r;
+    try {
+      if (borrador?.clase === clase) {
+        r = await api(`/borradores/${borrador.id}`, { method: 'PUT', body: { datos } });
+      } else {
+        r = await api('/borradores', { method: 'POST', body: { clase, datos } });
+        if (borrador) await api(`/borradores/${borrador.id}`, { method: 'DELETE' });
+      }
+    } catch (err) { mostrarError(err); return; }
+    if (clase === 'proforma') {
+      toast(`Proforma PF-${String(r.numero).padStart(6, '0')} guardada`, 'ok');
+      location.hash = '#/proformas';
+    } else {
+      toast(r.errores ? 'Preliminar guardado; aún le faltan datos para emitirlo' : 'Preliminar guardado', 'ok');
+      if (borrador) vistaEmitir(cont, tipo.value, { borrador: { ...r, datos } }); else location.hash = `#/emitir/borrador/${r.id}`;
+    }
+  });
+
+  const emitir = h('button', { type: 'submit', class: 'primario' },
+    borrador?.clase === 'proforma' ? 'Convertir en comprobante y enviar' : 'Firmar y enviar a Hacienda');
   const form = h('form', { onsubmit: (e) => {
     e.preventDefault();
     vaciar(mensaje);
+    if (esProforma && !borrador) { guardarComo(emitir, 'proforma'); return; }
     conBoton(emitir, async () => {
-      const t = tipo.value;
-      if (t !== '08' && exoCliente?.identificacion && receptor.identificacion() !== exoCliente.identificacion) {
-        vaciar(mensaje, aviso(`La exoneración ${exoCliente.autorizacion} es de la identificación ${exoCliente.identificacion}; cambie el cliente o quite la exoneración.`, 'error'));
-        return;
-      }
-      const datos = {
-        tipo_documento: t, sucursal: Number(sucursal.value), terminal: Number(terminal.value),
-        condicion_venta: condicion.value, moneda: moneda.value,
-        productos: lineas.map((l) => l.valor()),
-        medios_pago: medioFilas.map(({ t: tp, m }) => (m.value ? { tipo: tp.value, monto: m.value } : { tipo: tp.value })),
-        situacion: situacion.value,
-      };
-      if (refExterna.value.trim()) datos.referencia_externa = refExterna.value.trim();
-      if (plazo.value && !campoPlazo.classList.contains('oculto')) datos.plazo_credito = Number(plazo.value);
-      if (tipoCambio.value && moneda.value !== 'CRC') datos.tipo_cambio = tipoCambio.value;
-      if (situacion.value !== '1') datos.fecha_emision = fechaEmision.value ? `${fechaEmision.value}:00` : null;
-      if (notas.value.trim()) datos.notas = notas.value.trim();
-      if (ivaDevuelto.value && !campoDevuelto.classList.contains('oculto')) datos.iva_devuelto = ivaDevuelto.value;
-      if (servicio10.checked) datos.otros_cargos = [{ tipo_documento: '06', detalle: 'Impuesto de servicio 10%', porcentaje: '10' }];
-      if (t === '08') {
-        datos.proveedor = proveedor.valor();
-      } else {
-        datos.receptor = receptor.valor();
-        if (receptor.actividad()) datos.codigo_actividad_receptor = receptor.actividad();
-      }
-      if (!seccionRef.classList.contains('oculto')) {
-        datos.referencia = {
-          tipo_documento: ref.tipo.value, numero: ref.numero.value.trim() || null,
-          fecha_emision: ref.fecha.value ? `${ref.fecha.value}:00` : null, codigo: ref.codigo.value, razon: ref.razon.value.trim() || null,
-        };
-      }
+      if (exoneracionDeOtro()) return;
+      const datos = armarDatos();
       try {
-        const r = await api('/facturas', { method: 'POST', body: datos });
-        if (t !== '08') await receptor.guardarEnCatalogo();
+        let r;
+        if (borrador) {
+          await api(`/borradores/${borrador.id}`, { method: 'PUT', body: { datos } });
+          r = await api(`/borradores/${borrador.id}/emitir`, { method: 'POST' });
+        } else {
+          r = await api('/facturas', { method: 'POST', body: datos });
+        }
+        if (datos.tipo_documento !== '08') await receptor.guardarEnCatalogo();
         toast(r.message, 'ok');
         location.hash = `#/comprobantes/${r.factura_id}`;
       } catch (err) {
-        vaciar(mensaje, h('div', { class: 'aviso error' }, err.message));
-        mensaje.scrollIntoView({ behavior: 'smooth' });
+        mostrarError(err);
       }
     });
   } },
@@ -671,7 +825,42 @@ export async function vistaEmitir(cont) {
       h('p', { class: 'suave' }, 'Estimado; el cálculo oficial lo hace el sistema al firmar.'))),
   seccionRef,
   mensaje,
-  h('div', { class: 'acciones' }, emitir));
+  h('div', { class: 'acciones' }, botonesGuardar(), emitir));
 
-  vaciar(cont, h('div', { class: 'encabezado' }, h('h1', {}, 'Nuevo comprobante')), form);
+  function botonesGuardar() {
+    if (esProforma && !borrador) {
+      emitir.textContent = 'Guardar proforma';
+      return null;
+    }
+    const preliminar = h('button', { type: 'button', onclick: () => guardarComo(preliminar, borrador?.clase || 'preliminar') },
+      borrador ? 'Guardar cambios' : 'Guardar como preliminar');
+    const proforma = borrador?.clase === 'proforma' ? null
+      : h('button', { type: 'button', onclick: () => guardarComo(proforma, 'proforma') }, 'Guardar como proforma');
+    const pdf = borrador?.clase === 'proforma'
+      ? h('button', { type: 'button', onclick: () => conBoton(pdf, () => abrir(`/borradores/${borrador.id}/pdf`)) }, 'Ver PDF') : null;
+    return [preliminar, proforma, pdf];
+  }
+
+  const nombreDocumento = () => {
+    if (borrador?.clase === 'proforma') return `Proforma PF-${String(borrador.numero).padStart(6, '0')}`;
+    if (esProforma) return 'Nueva proforma';
+    return `${TIPOS_DOCUMENTO[tipo.value]}${borrador ? ' (preliminar)' : ''}`;
+  };
+  const titulo = h('h1', {}, nombreDocumento());
+  tipo.addEventListener('change', () => { titulo.textContent = nombreDocumento(); });
+  const volver = borrador ? h('a', { href: borrador.clase === 'proforma' ? '#/proformas' : '#/preliminares' },
+    borrador.clase === 'proforma' ? '← Proformas' : '← Documentos preliminares') : null;
+  vaciar(cont, h('div', { class: 'encabezado' }, h('div', {}, volver, titulo),
+    h('a', { href: '#/factura-rapida', class: 'boton' }, 'Factura rápida')),
+    borrador?.errores ? aviso(`Falta para emitirlo:\n${borrador.errores}`, 'alerta') : null,
+    form);
 }
+
+export async function vistaEditarBorrador(cont, id) {
+  const b = await api(`/borradores/${id}`);
+  if (b.estado === 'FACTURADO') { location.hash = `#/comprobantes/${b.factura_id}`; return; }
+  if (b.estado === 'ANULADO') { vaciar(cont, aviso('Esta proforma está anulada.', 'alerta')); return; }
+  await vistaEmitir(cont, b.tipo_documento, { borrador: b });
+}
+
+export const vistaNuevaProforma = (cont) => vistaEmitir(cont, '01', { proforma: true });

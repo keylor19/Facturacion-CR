@@ -1,10 +1,13 @@
 import { api } from '../api.js';
 import { h, vaciar, tabla, modal, conBoton, toast, campo, opciones, aviso, alCompletarCedula, avisoContribuyente, avisoNoInscrito } from '../dom.js';
 import { TIPOS_IDENTIFICACION } from '../catalogos.js';
+import { selectorUbicacion } from '../ubicacion.js';
+import { descargarCsv, pantallaCarga } from '../csv.js';
 
 // Formulario de cliente (nuevo o edición). alGuardar recibe el cliente guardado.
 export function dialogoCliente(cliente, alGuardar) {
   const c = cliente || {};
+  const ubicacion = selectorUbicacion(c);
   const f = {
     tipo_identificacion: h('select', {}, opciones(TIPOS_IDENTIFICACION, c.tipo_identificacion || '01')),
     numero_identificacion: h('input', { type: 'text', maxlength: '20', value: c.numero_identificacion || '', placeholder: 'Sin guiones' }),
@@ -13,9 +16,9 @@ export function dialogoCliente(cliente, alGuardar) {
     correo: h('input', { type: 'email', value: c.correo || '' }),
     telefono: h('input', { type: 'tel', maxlength: '20', value: c.telefono || '', placeholder: '88887777' }),
     codigo_actividad: h('input', { type: 'text', maxlength: '6', value: c.codigo_actividad || '', placeholder: 'Opcional' }),
-    provincia: h('input', { type: 'text', maxlength: '1', value: c.provincia || '', placeholder: '1' }),
-    canton: h('input', { type: 'text', maxlength: '2', value: c.canton || '', placeholder: '01' }),
-    distrito: h('input', { type: 'text', maxlength: '2', value: c.distrito || '', placeholder: '01' }),
+    provincia: ubicacion.provincia,
+    canton: ubicacion.canton,
+    distrito: ubicacion.distrito,
     otras_senas: h('input', { type: 'text', maxlength: '250', value: c.otras_senas || '' }),
     notas: h('textarea', { rows: '2', maxlength: '1000' }, c.notas || ''),
   };
@@ -86,7 +89,10 @@ export async function vistaClientes(cont, busqueda = '') {
 
   vaciar(cont,
     h('div', { class: 'encabezado' }, h('h1', {}, 'Clientes'),
-      h('button', { type: 'button', class: 'primario', onclick: () => dialogoCliente(null, refrescar) }, '+ Nuevo cliente')),
+      h('div', { class: 'acciones' },
+        h('a', { href: '#/clientes/cargar', class: 'boton' }, 'Cargar desde Excel'),
+        h('a', { href: '#/clientes/reporte', class: 'boton' }, 'Reporte'),
+        h('button', { type: 'button', class: 'primario', onclick: () => dialogoCliente(null, refrescar) }, '+ Nuevo cliente'))),
     h('form', { class: 'fila', onsubmit: (e) => { e.preventDefault(); refrescar(); } }, q,
       h('button', { type: 'submit' }, 'Buscar')),
     h('section', { class: 'tarjeta' }, tabla([
@@ -97,4 +103,63 @@ export async function vistaClientes(cont, busqueda = '') {
       { titulo: '', valor: eliminar },
     ], lista, (c) => dialogoCliente(c, refrescar))),
     h('p', { class: 'suave' }, 'Toque un cliente para editarlo. Al facturar, elíjalo en "Cliente (receptor)".'));
+}
+
+const COLUMNAS_CSV = ['tipo_identificacion', 'numero_identificacion', 'nombre', 'nombre_comercial', 'correo', 'telefono',
+  'codigo_actividad', 'provincia', 'canton', 'distrito', 'otras_senas', 'notas'];
+
+export async function vistaCargarClientes(cont) {
+  vaciar(cont, pantallaCarga({
+    titulo: 'Cargar clientes',
+    volver: h('a', { href: '#/clientes' }, '← Clientes'),
+    descripcion: 'Una fila por cliente. Obligatorios: tipo de identificación (01 física, 02 jurídica, 03 DIMEX, 04 NITE), '
+      + 'identificación sin guiones y nombre. Ubicación con códigos de Hacienda (provincia 1-7, cantón y distrito de 2 dígitos). '
+      + 'Los clientes que ya existen se reportan y no se modifican.',
+    plantilla: 'plantilla-clientes.csv',
+    ejemplo: [COLUMNAS_CSV,
+      ['01', '112345678', 'Juan Pérez Mora', '', 'juan@correo.com', '88887777', '', '1', '01', '01', 'Del parque 100 m norte', ''],
+      ['02', '3101123456', 'Comercial Ejemplo S.A.', 'Ejemplo', 'facturas@ejemplo.cr', '22223333', '523002', '', '', '', '', '']],
+    columnas: [
+      { titulo: 'Identificación', valor: (r) => h('span', { class: 'mono' }, r.fila.numero_identificacion || '') },
+      { titulo: 'Nombre', valor: (r) => r.fila.nombre || '' },
+      { titulo: 'Correo', valor: (r) => r.fila.correo || '' },
+    ],
+    convertir(fila) {
+      const cuerpo = {};
+      for (const k of COLUMNAS_CSV) cuerpo[k] = fila[k] || null;
+      if (cuerpo.tipo_identificacion) cuerpo.tipo_identificacion = cuerpo.tipo_identificacion.padStart(2, '0');
+      if (cuerpo.numero_identificacion) cuerpo.numero_identificacion = cuerpo.numero_identificacion.replace(/\D/g, '');
+      if (cuerpo.telefono) cuerpo.telefono = cuerpo.telefono.replace(/\D/g, '');
+      if (cuerpo.codigo_actividad) cuerpo.codigo_actividad = cuerpo.codigo_actividad.replace(/\D/g, '').padStart(6, '0');
+      for (const k of ['canton', 'distrito']) if (cuerpo[k]) cuerpo[k] = cuerpo[k].padStart(2, '0');
+      if (!TIPOS_IDENTIFICACION[cuerpo.tipo_identificacion]) return { error: 'Tipo de identificación no válido' };
+      if (!cuerpo.numero_identificacion) return { error: 'Falta la identificación' };
+      if (!cuerpo.nombre) return { error: 'Falta el nombre' };
+      return { cuerpo };
+    },
+    enviar: (cuerpo) => api('/catalogo/clientes', { method: 'POST', body: cuerpo }),
+  }));
+}
+
+export async function vistaReporteClientes(cont) {
+  const lista = await api('/catalogo/clientes?limite=1000');
+  const exportar = () => descargarCsv('clientes.csv',
+    ['Tipo', 'Identificación', 'Nombre', 'Nombre comercial', 'Correo', 'Teléfono', 'Actividad', 'Provincia', 'Cantón', 'Distrito', 'Otras señas', 'Notas'],
+    lista.map((c) => [TIPOS_IDENTIFICACION[c.tipo_identificacion] || c.tipo_identificacion, c.numero_identificacion, c.nombre,
+      c.nombre_comercial, c.correo, c.telefono, c.codigo_actividad, c.provincia, c.canton, c.distrito, c.otras_senas, c.notas]));
+  const sinCorreo = lista.filter((c) => !c.correo).length;
+  vaciar(cont,
+    h('div', { class: 'encabezado' }, h('div', {}, h('a', { href: '#/clientes' }, '← Clientes'), h('h1', {}, 'Reporte de clientes')),
+      h('button', { type: 'button', class: 'primario', onclick: exportar }, 'Descargar (Excel)')),
+    h('div', { class: 'kpis' },
+      h('div', { class: 'kpi' }, h('div', { class: 'etiqueta' }, 'Clientes registrados'), h('div', { class: 'valor' }, lista.length)),
+      h('div', { class: `kpi ${sinCorreo ? 'alerta' : ''}` }, h('div', { class: 'etiqueta' }, 'Sin correo (no reciben la factura)'), h('div', { class: 'valor' }, sinCorreo))),
+    h('section', { class: 'tarjeta' }, tabla([
+      { titulo: 'Nombre', valor: (c) => c.nombre },
+      { titulo: 'Tipo', valor: (c) => TIPOS_IDENTIFICACION[c.tipo_identificacion] || c.tipo_identificacion },
+      { titulo: 'Identificación', valor: (c) => h('span', { class: 'mono' }, c.numero_identificacion) },
+      { titulo: 'Correo', valor: (c) => c.correo || h('span', { class: 'badge CONTINGENCIA' }, 'Sin correo') },
+      { titulo: 'Teléfono', valor: (c) => c.telefono || '' },
+      { titulo: 'Actividad', valor: (c) => c.codigo_actividad || '' },
+    ], lista)));
 }

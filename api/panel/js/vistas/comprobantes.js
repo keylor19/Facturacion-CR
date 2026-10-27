@@ -170,7 +170,7 @@ function dialogoAnular(id) {
   ], { acciones: [boton] });
 }
 
-function dialogoPago(id, c, saldo, alTerminar) {
+export function dialogoPago(id, c, saldo, alTerminar) {
   const monto = h('input', { type: 'number', step: '0.01', min: '0.01', value: String(saldo) });
   const medio = h('select', {}, opciones(MEDIOS_PAGO, '04'));
   const boton = h('button', { type: 'button', class: 'primario', onclick: () => conBoton(boton, async () => {

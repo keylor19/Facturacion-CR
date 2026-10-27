@@ -32,28 +32,73 @@ a { color: var(--azul); }
 .derecha { text-align: right; }
 .oculto { display: none !important; }
 
-/* ---------- Layout ---------- */
-.layout { display: grid; grid-template-columns: 230px 1fr; min-height: 100vh; }
-.lateral { background: var(--azul-oscuro); color: #fff; display: flex; flex-direction: column; }
-.marca { display: flex; align-items: center; gap: 10px; padding: 18px 16px; font-weight: 700; font-size: 15px; }
+/* ---------- Layout: cabecera con menú superior desplegable ---------- */
+.layout { min-height: 100vh; display: flex; flex-direction: column; }
+.cabecera { position: sticky; top: 0; z-index: 40; background: #fff; box-shadow: 0 1px 0 var(--borde), 0 2px 6px rgba(16, 24, 40, .05); }
+.barra { display: flex; align-items: center; gap: 12px; padding: 8px 24px; background: var(--azul-oscuro); color: #fff; flex-wrap: wrap; }
+.marca { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; color: #fff; text-decoration: none; margin-right: 8px; }
 .marca img { width: 28px; height: 28px; }
-.lateral nav { display: flex; flex-direction: column; padding: 8px; gap: 2px; }
-.lateral nav a { color: #d6e2ee; text-decoration: none; padding: 9px 12px; border-radius: 6px; }
-.lateral nav a:hover { background: rgba(255, 255, 255, .08); color: #fff; }
-.lateral nav a.activo { background: rgba(255, 255, 255, .16); color: #fff; font-weight: 600; }
-.lateral .seccion { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #8fa9c2; padding: 14px 12px 4px; }
-.principal { display: flex; flex-direction: column; min-width: 0; }
-.barra { display: flex; align-items: center; gap: 12px; padding: 10px 24px; background: #fff; border-bottom: 1px solid var(--borde); flex-wrap: wrap; }
 .barra .empresa { display: flex; align-items: center; gap: 8px; }
-.barra .empresa select { min-width: 280px; }
+.barra .empresa select { min-width: 280px; padding: 5px 8px; }
 .barra .espacio { flex: 1; }
-.contenido { padding: 24px; max-width: 1280px; width: 100%; }
+.barra .salir { background: transparent; color: #fff; border-color: rgba(255, 255, 255, .35); padding: 5px 12px; }
+.barra .salir:hover { background: rgba(255, 255, 255, .12); }
+.contenido { padding: 24px; max-width: 1280px; width: 100%; margin: 0 auto; }
+
+.icono { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
+.icono.flecha { width: 14px; height: 14px; opacity: .6; transition: transform .15s; }
+
+.menu { display: flex; align-items: stretch; flex-wrap: wrap; padding: 0 16px; }
+.menu-inicio { display: flex; align-items: center; padding: 0 14px; color: var(--texto); border-bottom: 3px solid transparent; }
+.menu-inicio .icono { width: 20px; height: 20px; }
+.menu-inicio:hover, .menu-inicio.activo { color: var(--azul); border-bottom-color: var(--azul); }
+.menu-grupo { position: relative; display: flex; }
+.menu > .menu-grupo + .menu-grupo::before, .menu > .menu-inicio + .menu-grupo::before {
+  content: ""; align-self: center; width: 1px; height: 18px; background: var(--borde);
+}
+.menu-boton {
+  border: none; border-radius: 0; background: none; border-bottom: 3px solid transparent; padding: 13px 14px 10px;
+  font-weight: 700; font-size: 12.5px; letter-spacing: .03em; text-transform: uppercase; color: var(--texto); gap: 7px;
+}
+.menu-boton:hover { background: var(--gris-claro); }
+.menu-grupo.activo > .menu-boton { color: var(--azul); border-bottom-color: var(--azul); }
+.menu-grupo.abierto > .menu-boton .flecha { transform: rotate(180deg); }
+.desplegable {
+  display: none; position: absolute; top: 100%; left: 0; min-width: 250px; background: #fff; border: 1px solid var(--borde);
+  border-radius: 0 0 var(--radio) var(--radio); box-shadow: 0 10px 24px rgba(16, 24, 40, .14); padding: 6px 0; z-index: 45;
+}
+.desplegable a { display: block; padding: 10px 18px; color: var(--texto); text-decoration: none; border-bottom: 1px solid var(--gris-claro); white-space: nowrap; }
+.desplegable a:last-child { border-bottom: none; }
+.desplegable a:hover, .desplegable a:focus-visible { background: var(--azul-claro); color: var(--azul-oscuro); outline: none; }
+.desplegable a.activo { color: var(--verde); font-weight: 600; }
+.menu-grupo.abierto > .desplegable { display: block; }
+@media (hover: hover) and (min-width: 861px) {
+  .menu .menu-grupo:hover > .desplegable { display: block; }
+}
+
+/* Menú del usuario dentro de la barra oscura */
+.menu-usuario .menu-boton { color: #fff; text-transform: none; font-size: 13px; letter-spacing: 0; padding: 6px 10px; border-bottom: none; border-radius: 6px; }
+.menu-usuario .menu-boton:hover { background: rgba(255, 255, 255, .12); }
+.menu-grupo.menu-usuario.activo > .menu-boton { color: #fff; }
+.menu-usuario .desplegable { left: auto; right: 0; top: calc(100% + 6px); border-radius: var(--radio); min-width: 220px; }
+.menu-movil { display: none; background: transparent; border-color: rgba(255, 255, 255, .35); color: #fff; padding: 5px 8px; }
+.menu-movil:hover { background: rgba(255, 255, 255, .12); }
 
 @media (max-width: 860px) {
-  .layout { grid-template-columns: 1fr; }
-  .lateral nav { flex-direction: row; flex-wrap: wrap; }
-  .lateral .seccion { display: none; }
-  .barra .empresa select { min-width: 0; width: 100%; }
+  .barra { padding: 8px 16px; }
+  .barra .empresa { order: 10; width: 100%; }
+  .barra .empresa select { min-width: 0; flex: 1; }
+  .menu-usuario .menu-boton span { display: none; }
+  .menu-movil { display: inline-flex; }
+  .menu { display: none; flex-direction: column; padding: 0 0 8px; max-height: calc(100vh - 110px); overflow-y: auto; }
+  .menu.visible { display: flex; }
+  .menu > .menu-grupo::before { display: none; }
+  .menu-inicio { padding: 12px 16px; border-bottom: 1px solid var(--gris-claro); }
+  .menu .menu-grupo { flex-direction: column; }
+  .menu .menu-boton { width: 100%; justify-content: flex-start; border-bottom: 1px solid var(--gris-claro); padding: 12px 16px; }
+  .menu .menu-boton .flecha { margin-left: auto; }
+  .menu .desplegable { position: static; box-shadow: none; border: none; border-radius: 0; padding: 0; background: #fafbfc; }
+  .menu .desplegable a { padding-left: 42px; }
   .contenido { padding: 16px; }
 }
 
@@ -74,8 +119,10 @@ button, .boton {
   padding: 7px 14px; border-radius: 6px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
 }
 button:hover { background: var(--gris-claro); }
-button.primario { background: var(--azul); border-color: var(--azul); color: #fff; }
-button.primario:hover { background: var(--azul-oscuro); }
+button.primario, .boton.primario { background: var(--azul); border-color: var(--azul); color: #fff; }
+button.primario:hover, .boton.primario:hover { background: var(--azul-oscuro); }
+.boton:hover { background: var(--gris-claro); }
+button.grande { width: 100%; justify-content: center; padding: 12px 16px; font-size: 16px; font-weight: 700; margin-top: 12px; }
 button.peligro { color: var(--rojo); border-color: #f1b8b3; }
 button.peligro:hover { background: var(--rojo-claro); }
 button.chico { padding: 4px 10px; font-size: 13px; }
@@ -170,6 +217,29 @@ dl.datos dd { margin: 0; }
 [hidden] { display: none !important; }
 .logo-empresa { display: block; max-width: 220px; max-height: 90px; margin: 6px 0 12px; background: #fff; border: 1px solid var(--borde); border-radius: 6px; padding: 6px; }
 .negativo { color: var(--rojo); }
+
+/* Factura rápida */
+.venta-rapida { display: grid; grid-template-columns: 1fr 340px; gap: 18px; align-items: start; }
+.venta-rapida aside { position: sticky; top: 110px; }
+.venta-rapida td.cant input { width: 90px; }
+.venta-rapida .totales { width: 100%; min-width: 0; margin-top: 8px; }
+.categorias { margin-top: 8px; }
+.categorias:empty { display: none; }
+.sugerencias { display: flex; flex-direction: column; margin-top: 6px; }
+.sugerencias .sugerencia { justify-content: space-between; border-radius: 0; border-width: 0 0 1px; padding: 10px 8px; text-align: left; }
+.sugerencias .sugerencia:hover { background: var(--azul-claro); }
+@media (max-width: 960px) {
+  .venta-rapida { grid-template-columns: 1fr; }
+  .venta-rapida aside { position: static; }
+}
+
+/* Impresión (cierre de caja y reportes) */
+@media print {
+  .cabecera, .no-imprimir, #toasts { display: none !important; }
+  body { background: #fff; }
+  .contenido { padding: 0; max-width: none; }
+  .tarjeta, .kpi { box-shadow: none; break-inside: avoid; }
+}
 
 /* Secciones plegables (datos opcionales) */
 details { margin: 4px 0 14px; }
