@@ -52,21 +52,46 @@ export const INSTITUCIONES_EXONERACION = {
   '08': 'FECRUNAPA', '09': 'EARTH', '10': 'INCAE', '11': 'Junta de Protección Social', '12': 'ARESEP', '99': 'Otros',
 };
 
+// Anexos y Estructuras 4.4, actualización del 22-04-2026 (obligatoria desde el 01-11-2026)
 export const TIPOS_DOC_REFERENCIA = {
   '01': 'Factura electrónica', '02': 'Nota de débito', '03': 'Nota de crédito', '04': 'Tiquete',
   '05': 'Nota de despacho', '06': 'Contrato', '07': 'Procedimiento', '08': 'Comprobante emitido en contingencia',
   '09': 'Devolución de mercadería', '10': 'Comprobante rechazado por Hacienda',
   '11': 'Sustituye factura rechazada por el receptor', '12': 'Sustituye factura de exportación',
   '13': 'Facturación mes vencido', '14': 'Comprobante de régimen especial', '15': 'Sustituye factura de compra',
-  '16': 'Proveedor no domiciliado', '17': 'NC a factura de compra', '18': 'ND a factura de compra', '99': 'Otros',
+  '16': 'Proveedor no domiciliado', '17': 'NC a factura de compra', '18': 'ND a factura de compra',
+  '19': 'Factura de exportación', '20': 'Recibo de pago', '99': 'Otros',
 };
 
+// Nota 9. El 17 es exclusivo del recibo de pago (lo pone el sistema), por eso no se ofrece aquí.
 export const CODIGOS_REFERENCIA = {
-  '01': 'Anula documento', '02': 'Corrige texto', '04': 'Referencia a otro documento',
+  '01': 'Anula el documento', '02': 'Corrige el monto', '04': 'Referencia a otro documento',
   '05': 'Sustituye comprobante provisional por contingencia', '06': 'Devolución de mercancía',
   '07': 'Sustituye comprobante electrónico', '08': 'Factura endosada', '09': 'Nota de crédito financiera',
   '10': 'Nota de débito financiera', '11': 'Proveedor no domiciliado',
-  '12': 'Crédito por exoneración posterior', '99': 'Otros',
+  '12': 'Crédito por exoneración aprobada después de facturar',
+  '13': 'Anula por error material', '14': 'Corrige monto por error material',
+  '15': 'Sustituye comprobante anulado por error material', '16': 'Sustituye comprobante rechazado por Hacienda',
+  '99': 'Otros',
+};
+
+// Qué código ofrecer según el documento que se emite (lo demás lo rechaza el API)
+export const CODIGOS_POR_TIPO = {
+  '03': ['01', '13', '02', '14', '06', '09', '12', '04', '99'],
+  '02': ['02', '14', '10', '04', '99'],
+  otros: ['04', '07', '15', '16', '05', '08', '11', '99'],
+};
+
+// Ayuda: en qué mes cuenta el ajuste
+export const EFECTO_CODIGO = {
+  '01': 'El ajuste cuenta en el mes de esta nota.',
+  '02': 'El ajuste cuenta en el mes de esta nota.',
+  '06': 'El ajuste cuenta en el mes de esta nota.',
+  '12': 'El ajuste cuenta en el mes de esta nota.',
+  '13': 'Error material: el ajuste cuenta en el mes de la factura original. Si ese mes ya se declaró, hay que rectificar el IVA. La factura nueva que la reemplace lleva el código 15.',
+  '14': 'Error material: el ajuste cuenta en el mes de la factura original. Si ese mes ya se declaró, hay que rectificar el IVA.',
+  '15': 'Use este código en la factura nueva que reemplaza a una anulada por error material (código 13).',
+  '16': 'Use este código en el comprobante nuevo que reemplaza a uno rechazado por Hacienda.',
 };
 
 export const CONDICIONES_IMPUESTO = {

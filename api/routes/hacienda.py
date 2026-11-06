@@ -9,7 +9,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from api.models.database import Emisor
-from api.security import autenticar, emisor_actual
+from api.security import Principal, autenticar, emisor_actual
 from api.services import hacienda_client, hacienda_publico
 from api.services.hacienda_auth import HaciendaAuthError
 
@@ -40,6 +40,24 @@ def _privado(fn, *args, **kwargs):
 def consultar_contribuyente(identificacion: str):
     """Nombre, régimen, situación tributaria y actividades económicas registradas."""
     return _publico(hacienda_publico.contribuyente, identificacion)
+
+
+@router.get("/ficha/{identificacion}")
+def ficha_de_identificacion(identificacion: str, principal: Principal = Depends(autenticar)):
+    """
+    Todo lo de una cédula en una consulta: situación tributaria y actividades,
+    registro como productor (MAG / INCOPESCA) y exoneraciones conocidas.
+    Hacienda no permite buscar exoneraciones por cédula: se listan las que ya
+    se consultaron por su número de autorización (una empresa solo ve las que ella usó).
+    """
+    return _publico(hacienda_publico.ficha, identificacion, principal.emisor_id)
+
+
+@router.get("/exoneraciones")
+def exoneraciones_de_identificacion(identificacion: str = Query(description="Cédula sin guiones"),
+                                    principal: Principal = Depends(autenticar)):
+    """Exoneraciones de una cédula que la empresa ya usó en sus comprobantes (el administrador ve todas)."""
+    return _publico(hacienda_publico.exoneraciones_conocidas, identificacion, principal.emisor_id)
 
 
 @router.get("/exoneraciones/{autorizacion}", dependencies=[Depends(autenticar)])

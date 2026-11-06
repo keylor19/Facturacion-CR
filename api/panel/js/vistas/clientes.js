@@ -1,5 +1,6 @@
+// Clientes frecuentes de la empresa: lista, alta y edición, importación desde CSV y reporte de ventas por cliente.
 import { api } from '../api.js';
-import { h, vaciar, tabla, modal, conBoton, toast, campo, opciones, aviso, alCompletarCedula, avisoContribuyente, avisoNoInscrito } from '../dom.js';
+import { h, vaciar, tabla, modal, conBoton, toast, campo, opciones, aviso, alCompletarCedula, avisoContribuyente, avisoNoInscrito, limpiarIdentificacion } from '../dom.js';
 import { TIPOS_IDENTIFICACION } from '../catalogos.js';
 import { selectorUbicacion } from '../ubicacion.js';
 import { descargarCsv, pantallaCarga } from '../csv.js';
@@ -33,7 +34,7 @@ export function dialogoCliente(cliente, alGuardar) {
     try {
       r = await api(`/hacienda/contribuyentes/${id}`);
     } catch (e) {
-      if (vigente()) vaciar(info, e.status === 404 ? avisoNoInscrito(id) : aviso(e.message, 'error'));
+      if (vigente()) vaciar(info, e.status === 404 ? avisoNoInscrito(id, { comoCliente: true }) : aviso(e.message, 'error'));
       return;
     }
     if (!vigente()) return;
@@ -43,9 +44,9 @@ export function dialogoCliente(cliente, alGuardar) {
     vaciar(listaActividades, activas.map((a) => h('option', { value: String(a.codigo).padStart(6, '0') }, a.descripcion)));
     const principal = activas.find((a) => a.tipo === 'P') || activas[0];
     f.codigo_actividad.value = principal ? String(principal.codigo).padStart(6, '0') : '';
-    vaciar(info, avisoContribuyente(r, activas));
+    vaciar(info, avisoContribuyente(r, activas, { comoCliente: true }));
   });
-  const buscar = h('button', { type: 'button', onclick: () => conBoton(buscar, consultar) }, 'Volver a consultar');
+  const buscar = h('button', { type: 'button', onclick: () => conBoton(buscar, consultar) }, 'Buscar en Hacienda');
 
   const guardar = h('button', { type: 'button', class: 'primario', onclick: () => conBoton(guardar, async () => {
     const cuerpo = {};
@@ -128,7 +129,7 @@ export async function vistaCargarClientes(cont) {
       const cuerpo = {};
       for (const k of COLUMNAS_CSV) cuerpo[k] = fila[k] || null;
       if (cuerpo.tipo_identificacion) cuerpo.tipo_identificacion = cuerpo.tipo_identificacion.padStart(2, '0');
-      if (cuerpo.numero_identificacion) cuerpo.numero_identificacion = cuerpo.numero_identificacion.replace(/\D/g, '');
+      if (cuerpo.numero_identificacion) cuerpo.numero_identificacion = limpiarIdentificacion(cuerpo.numero_identificacion);
       if (cuerpo.telefono) cuerpo.telefono = cuerpo.telefono.replace(/\D/g, '');
       if (cuerpo.codigo_actividad) cuerpo.codigo_actividad = cuerpo.codigo_actividad.replace(/\D/g, '').padStart(6, '0');
       for (const k of ['canton', 'distrito']) if (cuerpo[k]) cuerpo[k] = cuerpo[k].padStart(2, '0');

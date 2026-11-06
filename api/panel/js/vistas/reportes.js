@@ -1,3 +1,5 @@
+// Reporte de IVA del mes (insumo D-104) con libros de ventas y compras, y aviso de las notas por error
+// material (códigos 13/14) que obligan a rectificar otro mes.
 import { api, descargar } from '../api.js';
 import { h, vaciar, dinero, mesActual, selectorMes, tabla, conBoton, aviso } from '../dom.js';
 import { TARIFAS_IVA, CONDICIONES_IMPUESTO } from '../catalogos.js';
@@ -23,6 +25,7 @@ export async function vistaReportes(cont) {
         kpi('IVA crédito fiscal (compras)', dinero(r.iva_credito_fiscal)),
         kpi('IVA neto estimado', dinero(r.iva_neto_estimado))),
       aviso(r.advertencia, 'info'),
+      seccionErrorMaterial(r.notas_error_material, r.rectificaciones_pendientes),
       h('section', { class: 'tarjeta' }, h('h2', {}, 'Ventas'),
         h('div', { class: 'campos' },
           dato('Venta neta', v.venta_neta), dato('Gravado', v.gravado), dato('Exento', v.exento),
@@ -70,4 +73,31 @@ function kpi(etiqueta, valor) {
 
 function dato(etiqueta, valor) {
   return h('div', {}, h('div', { class: 'suave' }, etiqueta), h('strong', {}, dinero(valor)));
+}
+
+// Notas con código 13 o 14 (error material): su efecto contable va al mes de la factura
+// original, así que pueden obligar a rectificar una declaración ya presentada.
+function seccionErrorMaterial(notas, rectificar) {
+  if (!notas) return null;
+  const anteriores = notas.afectan_meses_anteriores;
+  const posteriores = notas.emitidas_despues_que_afectan_este_mes;
+  if (!anteriores.length && !posteriores.length) return null;
+  const columnas = [
+    { titulo: 'Emitida', valor: (n) => n.fecha_emision },
+    { titulo: 'Documento', valor: (n) => h('a', { href: `#/comprobantes/${n.factura_id}` }, `${n.tipo} ${n.consecutivo}`) },
+    { titulo: 'Motivo', valor: (n) => n.motivo },
+    { titulo: 'Mes que afecta', valor: (n) => n.periodo_fiscal },
+    { titulo: 'IVA', num: true, valor: (n) => dinero(n.iva_crc) },
+    { titulo: 'Total', num: true, valor: (n) => dinero(n.total_crc) },
+  ];
+  return h('section', { class: 'tarjeta' }, h('h2', {}, 'Notas por error material'),
+    anteriores.length ? [
+      aviso(`Rectifique la declaración de IVA de: ${rectificar.join(', ')}. Estas notas se emitieron este mes, `
+        + 'pero por ser error material (código 13 o 14) su ajuste cuenta en el mes de la factura original. '
+        + 'No están sumadas en este mes.', 'alerta'),
+      tabla(columnas, anteriores)] : null,
+    posteriores.length ? [
+      aviso('Estas notas se emitieron después de cerrar este mes, pero lo afectan (error material). Ya están sumadas '
+        + 'arriba: si la declaración de este mes ya se presentó, hay que rectificarla.', 'alerta'),
+      tabla(columnas, posteriores)] : null);
 }

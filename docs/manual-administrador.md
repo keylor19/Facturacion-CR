@@ -125,8 +125,8 @@ Lo que tiene el cliente en el panel:
 
 | Sección | Para qué |
 |---|---|
-| **Clientes** | Sus clientes frecuentes. Al facturar, *Elegir cliente* llena todo; o marque *Guardar en mis clientes frecuentes* al emitir. |
-| **Productos** | Catálogo con CABYS, precio, unidad e IVA. Al facturar, *+ Del catálogo* agrega la línea con un clic. |
+| **Clientes** | Sus clientes frecuentes. Al facturar, *Elegir de mis clientes* llena todo; o marque *Guardar en mis clientes frecuentes* al emitir. |
+| **Productos** | Catálogo con CABYS, precio, unidad e IVA. Al facturar, *+ Agregar de mis productos* agrega la línea con un clic. |
 | **Inventario** | Existencias, valor al costo, productos bajo el mínimo y los últimos movimientos. Descarga de existencias en CSV. |
 
 Cómo funciona el inventario (solo en productos con *Controlar inventario*):

@@ -1,3 +1,4 @@
+// Saldo de documentos de la empresa: paquetes comprados, consumo y servicios contratados (API, panel web).
 import { api } from '../api.js';
 import { h, vaciar, dinero, fecha, tabla, aviso } from '../dom.js';
 import { contexto } from '../app.js';
@@ -33,7 +34,7 @@ export function tablaServicios(servicios, accion) {
   return tabla([
     { titulo: 'Servicio', valor: (s) => s.nombre },
     { titulo: 'Estado', valor: badgeServicio },
-    { titulo: 'Pagado hasta', valor: (s) => (s.vence ? fecha(s.vence, false) : '—') },
+    { titulo: 'Pagado hasta', valor: (s) => (s.regalia ? 'Regalía (no vence)' : s.vence ? fecha(s.vence, false) : '—') },
     accion ? { titulo: '', valor: accion } : null,
   ].filter(Boolean), servicios);
 }

@@ -18,7 +18,8 @@ from api.models.database import (
     ESTADOS_REENVIABLES, ESTADOS_FINALES, utcnow,
 )
 from api.services import (
-    buzon, catalogo_cabys, correo, emisores, hacienda_client, hacienda_publico, inventario, suscripciones, webhooks,
+    administracion, buzon, catalogo_cabys, correo, emisores, hacienda_client, hacienda_publico, inventario, suscripciones,
+    webhooks,
 )
 from api.services.fechas import zona_cr
 from api.services.hacienda_auth import HaciendaAuthError
@@ -400,13 +401,26 @@ def notificar_saldo(self, emisor_id: str, evento: str, datos: dict):
                 logger.warning("No se pudo notificar %s por webhook a %s", evento, emisor_id)
         if settings.smtp_configurado and evento in MENSAJES_SALDO:
             asunto, plantilla = MENSAJES_SALDO[evento]
+            # Además del aviso, la invitación a comprar: planes, formas de pago y contacto
+            cuerpo = f"{plantilla.format(nombre=emisor.nombre, **datos)}\n\n{administracion.texto_oferta(db, evento)}"
+            ajustes = administracion.ajustes(db)
+            msg = correo.mensaje_simple(emisor.correo, f"{asunto} - {emisor.nombre}", cuerpo)
+            if ajustes.correo_avisos:
+                msg["Reply-To"] = ajustes.correo_avisos   # la respuesta del cliente le llega al administrador
             try:
-                correo.enviar(correo.mensaje_simple(
-                    emisor.correo, f"{asunto} - {emisor.nombre}", plantilla.format(nombre=emisor.nombre, **datos)))
+                correo.enviar(msg)
                 enviados.append("correo")
             except correo.CorreoError:
                 if self.request.retries < self.max_retries:
                     raise self.retry(countdown=_backoff(self.request.retries))
+            if ajustes.correo_avisos and "correo" in enviados:
+                try:
+                    correo.enviar(correo.mensaje_simple(
+                        ajustes.correo_avisos, f"[Aviso enviado] {asunto} - {emisor.nombre}",
+                        f"Se le envió este aviso a {emisor.nombre} ({emisor.correo}):\n\n{cuerpo}"))
+                    enviados.append("copia al administrador")
+                except correo.CorreoError:
+                    logger.warning("No se pudo enviar la copia del aviso %s de %s", evento, emisor_id)
         logger.info("Aviso %s para %s: %s", evento, emisor_id, enviados or "sin canales configurados")
         return {"status": "ok", "canales": enviados}
     finally:

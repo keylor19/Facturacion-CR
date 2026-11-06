@@ -1,3 +1,4 @@
+// Inicio de sesión del panel, con verificación en dos pasos si el usuario la tiene activa.
 import { api, sesion } from '../api.js';
 import { h, vaciar } from '../dom.js';
 import { cargarContexto, contexto } from '../app.js';

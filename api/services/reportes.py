@@ -6,6 +6,11 @@ Solo cuentan los documentos ACEPTADOS por Hacienda. Los montos se
 convierten a colones con el tipo de cambio de cada comprobante y las notas
 de crédito restan.
 
+Cada venta cuenta en su período fiscal: el mes de emisión, salvo las notas
+con código 13 o 14 (error material), que cuentan en el mes del comprobante
+que modifican (Anexos y Estructuras 4.4, nota 9, vigente desde el 01-11-2026).
+Si ese mes ya se declaró hay que rectificar la declaración: el resumen lo avisa.
+
 ⚠️ Es un insumo de trabajo: la declaración tiene casillas y reglas
 (prorrata, proporcionalidad, etc.) que el contador debe revisar.
 """
@@ -15,11 +20,11 @@ from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from api.models.database import DocumentoRecibido, Emisor, EstadoFactura, Factura
-from api.models.schemas import TARIFAS_IVA, TIPOS_COMPROBANTE
+from api.models.schemas import CODIGOS_REFERENCIA, TARIFAS_IVA, TIPOS_COMPROBANTE
 from api.services.fechas import zona_cr
 
 CERO = Decimal("0")
@@ -45,6 +50,14 @@ def _tc(valor) -> Decimal:
     return Decimal(valor) if valor else Decimal("1")
 
 
+def _del_periodo(desde: datetime, hasta: datetime):
+    """Comprobantes cuyo efecto contable es de este mes (los anteriores a 0016 sin período: por fecha)."""
+    return or_(
+        Factura.periodo_fiscal == desde.date(),
+        and_(Factura.periodo_fiscal.is_(None), Factura.fecha_emision >= desde, Factura.fecha_emision < hasta),
+    )
+
+
 def _ventas(db: Session, emisor: Emisor, desde: datetime, hasta: datetime):
     return db.scalars(
         select(Factura)
@@ -53,11 +66,45 @@ def _ventas(db: Session, emisor: Emisor, desde: datetime, hasta: datetime):
             Factura.emisor_id == emisor.id,
             Factura.estado == EstadoFactura.ACEPTADO,
             Factura.tipo_documento.in_(TIPOS_VENTA),
-            Factura.fecha_emision >= desde,
-            Factura.fecha_emision < hasta,
+            _del_periodo(desde, hasta),
         )
         .order_by(Factura.fecha_emision)
     ).all()
+
+
+def _nota_fuera_de_mes(f: Factura, factor: Decimal) -> dict:
+    return {
+        "factura_id": str(f.id), "tipo": TIPOS_COMPROBANTE.get(f.tipo_documento, f.tipo_documento),
+        "consecutivo": f.numero_consecutivo, "clave": f.clave,
+        "fecha_emision": f.fecha_emision.astimezone(zona_cr()).strftime("%Y-%m-%d"),
+        "periodo_fiscal": f.periodo_fiscal.strftime("%Y-%m"),
+        "codigo_referencia": f.codigo_referencia,
+        "motivo": CODIGOS_REFERENCIA.get(f.codigo_referencia, ""),
+        "referencia_clave": f.referencia_clave,
+        "iva_crc": _r(f.monto_impuesto * factor), "total_crc": _r(f.monto_total * factor),
+    }
+
+
+def notas_de_otro_periodo(db: Session, emisor: Emisor, anio: int, mes: int) -> dict:
+    """
+    Notas por error material (13/14) que cruzan meses:
+      - emitidas este mes pero que afectan un mes anterior (hay que rectificar ese mes);
+      - emitidas después de este mes pero que lo afectan (este mes cambió después de cerrarlo).
+    """
+    desde, hasta = rango_mes(anio, mes)
+    base = (Factura.emisor_id == emisor.id, Factura.estado == EstadoFactura.ACEPTADO,
+            Factura.tipo_documento.in_(("02", "03")), Factura.periodo_fiscal.is_not(None))
+    emitidas_aqui = db.scalars(select(Factura).where(
+        *base, Factura.fecha_emision >= desde, Factura.fecha_emision < hasta, Factura.periodo_fiscal < desde.date(),
+    ).order_by(Factura.fecha_emision)).all()
+    posteriores = db.scalars(select(Factura).where(
+        *base, Factura.periodo_fiscal == desde.date(), Factura.fecha_emision >= hasta,
+    ).order_by(Factura.fecha_emision)).all()
+    afecta = lambda f: _nota_fuera_de_mes(f, _tc(f.tipo_cambio) * _signo(f.tipo_documento))
+    return {
+        "afectan_meses_anteriores": [afecta(f) for f in emitidas_aqui],
+        "emitidas_despues_que_afectan_este_mes": [afecta(f) for f in posteriores],
+    }
 
 
 def _compras(db: Session, emisor: Emisor, desde: datetime, hasta: datetime):
@@ -139,6 +186,7 @@ def resumen_iva(db: Session, emisor: Emisor, anio: int, mes: int) -> dict:
             fila["iva"] += d.impuesto_neto * _tc(r.tipo_cambio)
 
     iva_debito = totales_ventas["iva"]
+    cruces = notas_de_otro_periodo(db, emisor, anio, mes)
     iva_credito = sum((c["iva_acreditable"] for c in por_condicion.values()), CERO)
 
     return {
@@ -174,6 +222,8 @@ def resumen_iva(db: Session, emisor: Emisor, anio: int, mes: int) -> dict:
                 for c, v in sorted(rep_por_tarifa.items())
             ],
         },
+        "notas_error_material": cruces,
+        "rectificaciones_pendientes": sorted({n["periodo_fiscal"] for n in cruces["afectan_meses_anteriores"]}),
         "iva_debito_fiscal": _r(iva_debito),
         "iva_credito_fiscal": _r(iva_credito),
         "iva_neto_estimado": _r(iva_debito - iva_credito),
@@ -213,10 +263,13 @@ def libro_ventas_csv(db: Session, emisor: Emisor, anio: int, mes: int) -> str:
             _r(f.total_gravado * factor), _r(f.total_exento * factor), _r(f.total_exonerado * factor),
             _r(f.total_descuentos * factor), _r(f.monto_impuesto * factor), _r(f.total_otros_cargos * factor),
             _r(f.monto_total * factor),
+            f.periodo_fiscal.strftime("%Y-%m") if f.periodo_fiscal else "",
+            f.codigo_referencia or "", f.referencia_clave or "",
         ])
     return _csv(
         ["Fecha", "Tipo", "Consecutivo", "Clave", "Identificación receptor", "Receptor", "Moneda", "Tipo cambio",
-         "Gravado CRC", "Exento CRC", "Exonerado CRC", "Descuentos CRC", "IVA CRC", "Otros cargos CRC", "Total CRC"],
+         "Gravado CRC", "Exento CRC", "Exonerado CRC", "Descuentos CRC", "IVA CRC", "Otros cargos CRC", "Total CRC",
+         "Período fiscal", "Código referencia", "Clave referida"],
         filas,
     )
 

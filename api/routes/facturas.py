@@ -54,6 +54,9 @@ def _detalle(f: Factura) -> FacturaDetalleResponse:
         total_iva_devuelto=f.total_iva_devuelto,
         condicion_venta=f.condicion_venta,
         factura_origen_id=str(f.factura_origen_id) if f.factura_origen_id else None,
+        codigo_referencia=f.codigo_referencia,
+        referencia_clave=f.referencia_clave,
+        periodo_fiscal=f.periodo_fiscal,
     )
 
 
@@ -184,7 +187,7 @@ def anular_factura(
     if emision.notas_activas(db, original):
         raise HTTPException(status_code=409, detail="El comprobante ya tiene una nota de crédito de anulación")
     try:
-        datos = emision.datos_anulacion(original, payload.razon, payload.referencia_externa)
+        datos = emision.datos_anulacion(original, payload.razon, payload.referencia_externa, payload.codigo)
     except emision.EmisionError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail)
     return _emitir(db, emisor, datos, response, factura_origen_id=original.id)

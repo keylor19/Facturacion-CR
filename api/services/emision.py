@@ -3,17 +3,19 @@ Emisión de comprobantes: consecutivo, clave, XML, firma, validación y
 persistencia. Lo usan la API (crear, anular) y cualquier otro punto de entrada.
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from api.models.database import (
     Emisor, Factura, FacturaDetalle, EstadoFactura, siguiente_consecutivo,
 )
-from api.models.schemas import FacturaRequest, ReciboPagoRequest, ReferenciaRequest, TIPOS_COMPROBANTE
+from api.models.schemas import (
+    CODIGOS_ERROR_MATERIAL, FacturaRequest, ReciboPagoRequest, ReferenciaRequest, TIPOS_COMPROBANTE,
+)
 from api.services import emisores, hacienda_publico, inventario, saldo
 from api.services.cifrado import CifradoError
 from api.services.clave_generator import generar_clave, consecutivo_desde_clave
@@ -28,6 +30,62 @@ logger = logging.getLogger(__name__)
 
 # Comprobantes que se pueden anular con una nota de crédito
 TIPOS_ANULABLES = ("01", "02", "04", "09")
+
+# Tipo de comprobante -> "tipo de documento de referencia" con que se cita (nota 10)
+TIPO_REFERENCIA_DE = {"01": "01", "02": "02", "03": "03", "04": "04", "09": "19", "10": "20"}
+
+
+def tipo_referencia(tipo_comprobante: str, para: str) -> str:
+    """Cómo se cita un comprobante propio. Las notas a una factura de compra usan 17 (NC) y 18 (ND)."""
+    if tipo_comprobante == "08":
+        return "17" if para == "03" else "18"
+    return TIPO_REFERENCIA_DE[tipo_comprobante]
+
+
+def _mes(fecha: datetime) -> date:
+    return fecha.astimezone(zona_cr()).date().replace(day=1)
+
+
+def periodo_fiscal(datos: FacturaRequest, fecha_emision: datetime) -> date:
+    """
+    Mes al que va el efecto contable del comprobante. Las notas con código 13 o 14
+    (error material) afectan el período del comprobante que modifican; todo lo demás
+    (incluidos 01, 02, 06 y 12) el mes en que se emite.
+    """
+    if datos.tipo_documento in ("02", "03"):
+        for ref in datos.referencias:
+            if ref.codigo in CODIGOS_ERROR_MATERIAL:
+                return _mes(ref.fecha_emision if ref.fecha_emision.tzinfo else ref.fecha_emision.replace(tzinfo=zona_cr()))
+    return _mes(fecha_emision)
+
+
+def _verificar_tope_nota_credito(db: Session, emisor: Emisor, datos: FacturaRequest, monto: Decimal) -> None:
+    """
+    Hacienda: el ajuste (o la suma de ajustes) de las notas de crédito no puede superar
+    el comprobante referido más sus notas de débito. Se verifica cuando la nota cita un
+    solo comprobante y este es de esta misma empresa (con varias referencias no se
+    puede saber cuánto corresponde a cada una). Solo se suman notas en la misma moneda.
+    """
+    if datos.tipo_documento != "03" or len(datos.referencias) != 1:
+        return
+    clave = datos.referencias[0].numero
+    original = db.scalar(select(Factura).where(Factura.emisor_id == emisor.id, Factura.clave == clave))
+    if original is None or original.moneda != datos.moneda:
+        return
+    notas = db.scalars(select(Factura).where(
+        Factura.emisor_id == emisor.id, Factura.moneda == original.moneda,
+        Factura.tipo_documento.in_(("02", "03")), Factura.estado != EstadoFactura.RECHAZADO,
+        # La nota puede citar el comprobante en cualquiera de sus referencias
+        or_(Factura.referencia_clave == clave, Factura.json_original["referencias"].contains([{"numero": clave}])),
+    )).all()
+    debitos = sum((n.monto_total for n in notas if n.tipo_documento == "02"), Decimal("0"))
+    creditos = sum((n.monto_total for n in notas if n.tipo_documento == "03"), Decimal("0"))
+    disponible = original.monto_total + debitos - creditos
+    if monto > disponible:
+        raise EmisionError(422, (
+            f"La nota de crédito ({monto:.2f} {datos.moneda}) supera lo que queda por acreditar del comprobante "
+            f"{original.numero_consecutivo}: {max(disponible, Decimal('0')):.2f} {datos.moneda} "
+            "(total del comprobante + notas de débito - notas de crédito ya emitidas)."))
 
 
 class EmisionError(Exception):
@@ -157,6 +215,7 @@ def emitir(
         )
         consecutivo = consecutivo_desde_clave(clave)
         xml_sin_firmar, lineas, tot = generar_xml(clave, consecutivo, fecha_emision, persona, datos)
+        _verificar_tope_nota_credito(db, emisor, datos, tot.comprobante)
         xml_firmado = firmar_para_emisor(emisor, xml_sin_firmar)
         validar_xsd(xml_firmado, datos.tipo_documento)
     except XMLValidacionError as exc:
@@ -193,6 +252,9 @@ def emitir(
         referencia_externa=datos.referencia_externa,
         factura_origen_id=factura_origen_id,
         caja_id=caja_id,
+        codigo_referencia=datos.referencias[0].codigo if datos.referencias else None,
+        referencia_clave=datos.referencias[0].numero if datos.referencias else None,
+        periodo_fiscal=periodo_fiscal(datos, fecha_emision),
         receptor_nombre=contraparte.nombre if contraparte else None,
         receptor_identificacion=(contraparte.numero_identificacion or contraparte.identificacion_extranjero) if contraparte else None,
         receptor_tipo_identificacion=contraparte.tipo_identificacion if contraparte else None,
@@ -261,8 +323,12 @@ def emitir(
     return factura, True
 
 
-def datos_anulacion(original: Factura, razon: str, referencia_externa: str | None) -> FacturaRequest:
-    """Arma la nota de crédito que anula totalmente un comprobante aceptado."""
+def datos_anulacion(original: Factura, razon: str, referencia_externa: str | None, codigo: str = "01") -> FacturaRequest:
+    """
+    Arma la nota de crédito que anula totalmente un comprobante aceptado.
+    codigo 01: anulación (devolución, acuerdo); el ajuste va al mes de la nota.
+    codigo 13: error material; el ajuste va al mes del comprobante original.
+    """
     if original.tipo_documento not in TIPOS_ANULABLES:
         raise EmisionError(409, f"No se puede anular un comprobante tipo {original.tipo_documento}")
     if original.estado != EstadoFactura.ACEPTADO:
@@ -274,10 +340,10 @@ def datos_anulacion(original: Factura, razon: str, referencia_externa: str | Non
         referencia_externa=referencia_externa,
         referencia=None,
         referencias=[ReferenciaRequest(
-            tipo_documento=original.tipo_documento,
+            tipo_documento=tipo_referencia(original.tipo_documento, "03"),
             numero=original.clave,
             fecha_emision=original.fecha_emision,
-            codigo="01",
+            codigo=codigo,
             razon=razon,
         ).model_dump(mode="json")],
         tipo_cambio=str(original.tipo_cambio) if original.tipo_cambio else None,
@@ -316,8 +382,33 @@ def saldo_pendiente(db: Session, original: Factura) -> Decimal:
     return q(original.monto_total - pagado)
 
 
+# Precisión de los montos en el XML (5 decimales)
+CENTIMO = Decimal("0.00001")
+
+
+def _partir_pago(total: Decimal, tarifa: Decimal) -> tuple[Decimal, Decimal]:
+    """
+    Separa un monto pagado (IVA incluido) en subtotal e impuesto de forma que
+    impuesto = tarifa x subtotal (regla del recibo de pago, Anexos 4.4 de abril
+    2026) y que los dos sumen exactamente el monto.
+    """
+    t = tarifa / 100
+    base = q(total / (1 + t))
+    for subtotal in (base, base - CENTIMO, base + CENTIMO, base - 2 * CENTIMO, base + 2 * CENTIMO):
+        impuesto = q(subtotal * t)
+        if subtotal + impuesto == total:
+            return subtotal, impuesto
+    return base, q(base * t)
+
+
 def _lineas_recibo(original: Factura, monto: Decimal) -> list[LineaRecibo]:
-    """Reparte el pago entre las tarifas de IVA de la factura original, en proporción."""
+    """
+    Reparte el pago entre las tarifas de IVA de la factura original, en proporción.
+    En cada línea el impuesto es la tarifa por el subtotal, con la tarifa que
+    corresponde a su CodigoTarifaIVA (Hacienda valida que coincidan). El recibo no
+    lleva nodo de exoneración: en facturas exoneradas el pago se reparte con la tarifa
+    nominal, igual que lo hace Hacienda.
+    """
     proporcion = monto / original.monto_total
     grupos: dict = {}
     for d in original.detalles:
@@ -329,22 +420,20 @@ def _lineas_recibo(original: Factura, monto: Decimal) -> list[LineaRecibo]:
         g = grupos.setdefault(None, {"subtotal": Decimal("0"), "iva": Decimal("0"), "tarifa": None})
         g["subtotal"] += original.total_otros_cargos
 
+    orden = sorted(grupos.items(), key=lambda x: x[0] or "")
     lineas = []
-    for codigo, g in sorted(grupos.items(), key=lambda x: x[0] or ""):
+    asignado = Decimal("0")
+    for i, (codigo, g) in enumerate(orden):
+        # El último grupo recibe lo que falta para que el recibo sume exactamente el pago
+        total = q(monto) - asignado if i == len(orden) - 1 else q((g["subtotal"] + g["iva"]) * proporcion)
+        asignado += total
+        tarifa = Decimal(g["tarifa"] or 0)
+        subtotal, impuesto = _partir_pago(total, tarifa)
         detalle = f"Pago {TIPOS_COMPROBANTE[original.tipo_documento].lower()} {original.numero_consecutivo}"
         if codigo:
-            detalle += f" (IVA {Decimal(g['tarifa'] or 0):g}%)"
-        lineas.append(LineaRecibo(
-            detalle=detalle,
-            subtotal=q(g["subtotal"] * proporcion),
-            codigo_tarifa_iva=codigo,
-            tarifa=g["tarifa"],
-            impuesto=q(g["iva"] * proporcion),
-        ))
-    # Ajuste de redondeo para que el recibo sume exactamente el monto pagado
-    diferencia = q(monto) - sum((ln.total for ln in lineas), Decimal("0"))
-    if diferencia and lineas:
-        lineas[0].subtotal += diferencia
+            detalle += f" (IVA {tarifa:g}%)"
+        lineas.append(LineaRecibo(detalle=detalle, subtotal=subtotal, codigo_tarifa_iva=codigo,
+                                  tarifa=g["tarifa"], impuesto=impuesto))
     return lineas
 
 
@@ -392,8 +481,8 @@ def emitir_recibo_pago(db: Session, emisor: Emisor, original: Factura, req: Reci
         xml = generar_recibo_pago(
             clave, consecutivo, fecha, persona, receptor, CONDICION_PAGO[original.condicion_venta],
             original.moneda, original.tipo_cambio, lineas, req.medios_pago,
-            {"tipo_documento": original.tipo_documento, "numero": original.clave,
-             "fecha_emision": original.fecha_emision, "codigo": "04", "razon": "Pago de factura a crédito"},
+            {"tipo_documento": tipo_referencia(original.tipo_documento, "10"), "numero": original.clave,
+             "fecha_emision": original.fecha_emision, "codigo": get_settings().CODIGO_REFERENCIA_RECIBO_PAGO, "razon": "Pago de factura a crédito"},
         )
         xml_firmado = firmar_para_emisor(emisor, xml)
         validar_xsd(xml_firmado, "10")
@@ -414,6 +503,9 @@ def emitir_recibo_pago(db: Session, emisor: Emisor, original: Factura, req: Reci
         fecha_emision=fecha,
         referencia_externa=req.referencia_externa,
         factura_origen_id=original.id,
+        codigo_referencia=get_settings().CODIGO_REFERENCIA_RECIBO_PAGO,
+        referencia_clave=original.clave,
+        periodo_fiscal=_mes(fecha),
         receptor_nombre=original.receptor_nombre,
         receptor_identificacion=original.receptor_identificacion,
         receptor_tipo_identificacion=original.receptor_tipo_identificacion,

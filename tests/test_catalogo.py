@@ -139,7 +139,7 @@ def test_anulacion_devuelve_inventario(db, client, producto):
 def test_nota_de_credito_por_descuento_no_mueve_inventario(db, client, producto):
     datos = _venta(producto["id"], "1", tipo="03")
     datos["referencia"] = {"tipo_documento": "01", "numero": "5" * 50, "fecha_emision": "2026-10-01T10:00:00",
-                           "codigo": "03", "razon": "Descuento posterior"}
+                           "codigo": "02", "razon": "Descuento posterior"}
     assert client.post("/api/v1/facturas", json=datos).status_code == 202
     assert _existencia(db, producto["id"]) == Decimal("10")
 
@@ -222,9 +222,9 @@ def test_modulo_desactivado_bloquea_al_usuario_de_la_empresa(db, emisor, app_cli
                          ("get", "/api/v1/inventario/movimientos")]:
         assert getattr(app_client, metodo)(ruta, headers=h).status_code == 403, ruta
     r = app_client.post("/api/v1/facturas", json=factura_payload(), headers=h)
-    assert r.status_code == 403 and "facturación en línea" in r.json()["detail"]
-    # Puede seguir consultando sus comprobantes y reportes
-    assert app_client.get("/api/v1/facturas", headers=h).status_code == 200
+    assert r.status_code == 403 and "panel web" in r.json()["detail"]
+    # Sin panel web no consulta nada desde el panel (la empresa factura por API)
+    assert app_client.get("/api/v1/facturas", headers=h).status_code == 403
     # El sistema integrado por API y el administrador no se ven afectados
     assert app_client.post("/api/v1/facturas", json=factura_payload(), headers={"X-API-Key": api_key}).status_code == 202
     assert admin.get("/api/v1/catalogo/productos", headers={"X-Emisor-Id": emisor.id}).status_code == 200

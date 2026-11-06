@@ -345,8 +345,11 @@ def calcular(datos: FacturaRequest) -> tuple[list[LineaCalculada], Totales]:
 
     if datos.iva_devuelto:
         t.iva_devuelto = q(datos.iva_devuelto)
-        if t.iva_devuelto > t.impuesto:
-            raise XMLValidacionError("iva_devuelto no puede ser mayor al impuesto del comprobante")
+        tope = tope_iva_devuelto(datos, lineas, t)
+        if t.iva_devuelto > tope:
+            raise XMLValidacionError(
+                f"iva_devuelto ({t.iva_devuelto}) supera el máximo permitido ({tope}): con varios medios de pago u "
+                "otros productos se calcula (monto pagado con tarjeta / venta neta) x impuesto")
 
     return lineas, t
 
@@ -650,6 +653,24 @@ def generar_mensaje_receptor(
     _sub(root, "NumeroCedulaReceptor", cedula_receptor)
     _sub(root, "NumeroConsecutivoReceptor", consecutivo_receptor)
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8").decode("utf-8")
+
+
+def tope_iva_devuelto(datos: FacturaRequest, lineas: list, t) -> Decimal:
+    """
+    IVA devuelto (servicios de salud pagados con tarjeta), Anexos 4.4 de abril 2026:
+    solo con tarjeta (02). Si es el único medio de pago y solo se venden servicios, hasta
+    todo el impuesto; si hay más medios de pago u otros productos,
+    (monto pagado con tarjeta / venta neta) x impuesto.
+    """
+    tarjeta = [m for m in datos.medios_pago if m.tipo == "02"]
+    if not tarjeta:
+        raise XMLValidacionError("El IVA devuelto solo aplica a servicios de salud pagados con tarjeta (medio de pago 02)")
+    solo_tarjeta = len(datos.medios_pago) == 1
+    solo_servicios = all(ln.producto.servicio for ln in lineas)
+    if solo_tarjeta and solo_servicios:
+        return t.impuesto
+    pagado = (t.venta_neta + t.impuesto + t.otros_cargos) if solo_tarjeta else sum((m.monto or CERO for m in tarjeta), CERO)
+    return min(t.impuesto, q(pagado / t.venta_neta * t.impuesto)) if t.venta_neta else CERO
 
 
 @dataclass

@@ -1,3 +1,11 @@
+"""
+Punto de entrada de la aplicación web (FastAPI).
+
+Arma la app: registra las rutas de la API (/api/v1/...), sirve el panel web
+(/panel/), aplica los encabezados de seguridad (CSP sin scripts en línea) y el
+límite de solicitudes. La lógica de negocio vive en api/services/; las rutas
+solo validan, autorizan y llaman a esos servicios.
+"""
 import logging
 from pathlib import Path
 
@@ -6,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from api.routes import auth, borradores, buzon, cajas, callback, catalogo, emisores, facturas, hacienda, health, recepcion, reportes, saldo
+from api.routes import administracion, auth, borradores, buzon, cajas, callback, catalogo, emisores, facturas, hacienda, health, recepcion, reportes, saldo
 from config.settings import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -72,6 +80,7 @@ app.include_router(borradores.router)
 app.include_router(cajas.router)
 app.include_router(hacienda.router)
 app.include_router(emisores.router)
+app.include_router(administracion.router)
 app.include_router(callback.router)
 app.include_router(health.router)
 

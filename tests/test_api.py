@@ -587,3 +587,50 @@ def test_muestra_de_cabys_corrige_cambios_de_hacienda(db, hacienda_falsa, monkey
     db.expire_all()
     assert [(c.codigo, float(c.impuesto)) for c in db.query(CodigoCabys)] == [("2399999009900", 1.0)]
     catalogo_cabys._completo["hasta"] = 0
+
+
+EXONERACION = {"numeroDocumento": "AL-00020402-24", "identificacion": "3004061893", "porcentajeExoneracion": 12,
+               "fechaEmision": "2024-06-10T00:00:00", "fechaVencimiento": "2030-06-10T00:00:00",
+               "tipoDocumento": {"codigo": "04", "descripcion": "Exenciones Dirección General de Hacienda"},
+               "nombreInstitucion": "Ministerio de Hacienda", "cabys": ["0113200000000"]}
+
+
+def test_ficha_por_cedula_reune_contribuyente_productor_y_exoneraciones(client, admin, db, hacienda_falsa):
+    respuestas, _, _ = hacienda_falsa
+    respuestas["/fe/ae"] = _RespHacienda(200, {**CONTRIBUYENTE, "nombre": "COOPERATIVA X"})
+    respuestas["/fe/agropecuario"] = _RespHacienda(404)
+    respuestas["/fe/pesca"] = _RespHacienda(404)
+    respuestas["/fe/ex"] = _RespHacienda(200, EXONERACION)
+
+    f = client.get("/api/v1/hacienda/ficha/3004061893").json()
+    assert f["inscrito"] and f["contribuyente"]["nombre"] == "COOPERATIVA X"
+    assert f["productor"]["registrado"] is False and f["exoneraciones"] == []
+
+    # Hacienda no busca exoneraciones por cédula. Consultar un número no la comparte con otras empresas:
+    # la empresa solo ve las que ya usó en sus comprobantes a ese cliente; el administrador ve todas.
+    assert client.get("/api/v1/hacienda/exoneraciones/AL-00020402-24").status_code == 200
+    assert client.get("/api/v1/hacienda/ficha/3004061893").json()["exoneraciones"] == []
+    f = admin.get("/api/v1/hacienda/ficha/3004061893").json()
+    assert [(e["autorizacion"], e["porcentaje"], e["vigente"], e["vence"]) for e in f["exoneraciones"]] == [
+        ("AL-00020402-24", 12, True, "2030-06-10")]
+    # De otra cédula no se muestra
+    assert admin.get("/api/v1/hacienda/exoneraciones", params={"identificacion": "3101005744"}).json() == []
+
+    # Una factura de la empresa a ese cliente con esa exoneración: desde ahí la empresa la ve
+    from api.models.database import Factura
+    factura = db.get(Factura, client.post("/api/v1/facturas", json=factura_payload()).json()["factura_id"])
+    factura.receptor_identificacion = "3004061893"
+    factura.json_original = {**factura.json_original, "productos": [
+        {**factura.json_original["productos"][0], "exoneracion": {"numero_documento": "AL-00020402-24"}}]}
+    db.commit()
+    lista = client.get("/api/v1/hacienda/exoneraciones", params={"identificacion": "3004061893"}).json()
+    assert [e["autorizacion"] for e in lista] == ["AL-00020402-24"]
+
+
+def test_ficha_de_cedula_no_inscrita(client, hacienda_falsa):
+    respuestas, _, _ = hacienda_falsa
+    for ruta in ("/fe/ae", "/fe/agropecuario", "/fe/pesca"):
+        respuestas[ruta] = _RespHacienda(404)
+    f = client.get("/api/v1/hacienda/ficha/206890580").json()
+    assert f["contribuyente"] is None and f["inscrito"] is False and f["errores"] == {}
+    assert client.get("/api/v1/hacienda/ficha/12-3").status_code == 422

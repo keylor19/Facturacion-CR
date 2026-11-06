@@ -30,3 +30,10 @@ def guardar_json(clave: str, valor, ttl: int) -> None:
         redis_client().set(clave, json.dumps(valor, default=str), ex=ttl)
     except redis.RedisError:
         logger.warning("Redis no disponible guardando %s", clave)
+
+
+def borrar(*claves: str) -> None:
+    try:
+        redis_client().delete(*claves)
+    except redis.RedisError:
+        logger.warning("Redis no disponible borrando %s", claves)

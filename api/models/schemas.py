@@ -6,7 +6,7 @@ Esto es lo que tus clientes (frontend, POS, ERP, otros sistemas) van a consumir.
 versión vigente publicada por Hacienda.
 """
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import List, Literal, Optional
 
@@ -51,6 +51,61 @@ TIPOS_COMPROBANTE = {
     "10": "Recibo electrónico de pago",
 }
 
+# Anexos y Estructuras 4.4, actualización del 22-04-2026 (obligatoria desde el 01-11-2026).
+# Nota 9: código de referencia (por qué se referencia el documento)
+CODIGOS_REFERENCIA = {
+    "01": "Anula documento de referencia",
+    "02": "Corrige monto",
+    "04": "Referencia a otro documento",
+    "05": "Sustituye comprobante provisional por contingencia",
+    "06": "Devolución de mercancía",
+    "07": "Sustituye comprobante electrónico",
+    "08": "Factura endosada",
+    "09": "Nota de crédito financiera",
+    "10": "Nota de débito financiera",
+    "11": "Proveedor no domiciliado",
+    "12": "Nota de crédito financiera por exoneración posterior a la facturación",
+    "13": "Anula documento de referencia por error material",
+    "14": "Corrige monto por error material",
+    "15": "Sustituye comprobante electrónico por error material",
+    "16": "Sustituye comprobante electrónico rechazado",
+    "17": "Pago a comprobante electrónico",
+    "99": "Otros",
+}
+# Códigos 13 y 14 en notas: el efecto contable va al período del comprobante que modifican
+CODIGOS_ERROR_MATERIAL = ("13", "14")
+
+# Nota 10: tipo de documento de referencia
+TIPOS_DOC_REFERENCIA = {
+    "01": "Factura electrónica",
+    "02": "Nota de débito electrónica",
+    "03": "Nota de crédito electrónica",
+    "04": "Tiquete electrónico",
+    "05": "Nota de despacho",
+    "06": "Contrato",
+    "07": "Procedimiento",
+    "08": "Comprobante emitido en contingencia",
+    "09": "Devolución mercadería",
+    "10": "Comprobante electrónico rechazado por el Ministerio de Hacienda",
+    "11": "Sustituye factura rechazada por el receptor del comprobante",
+    "12": "Sustituye factura de exportación",
+    "13": "Facturación mes vencido",
+    "14": "Comprobante aportado por contribuyente de régimen especial",
+    "15": "Sustituye una factura electrónica de compra",
+    "16": "Comprobante de proveedor no domiciliado",
+    "17": "Nota de crédito a factura electrónica de compra",
+    "18": "Nota de débito a factura electrónica de compra",
+    "19": "Factura electrónica de exportación",
+    "20": "Recibo electrónico de pago",
+    "99": "Otros",
+}
+# Tipos de referencia cuyo "numero" debe ser la clave de 50 caracteres del comprobante
+TIPOS_REFERENCIA_CON_CLAVE = ("01", "02", "03", "04", "09", "11", "12", "15", "17", "18", "19", "20")
+# Tipos que el Recibo Electrónico de Pago puede referenciar
+TIPOS_REFERENCIA_RECIBO = ("01", "04", "07", "08", "10", "20")
+PATRON_CLAVE = r"[A-Za-z0-9]{50}"   # desde 2026 la clave admite letras (cédulas jurídicas alfanuméricas)
+ANTIGUEDAD_MAXIMA_REFERENCIA_ANIOS = 10
+
 # Longitudes válidas del número de identificación por tipo
 _LONGITUD_IDENTIFICACION = {
     "01": (9, 9),     # Cédula física
@@ -67,8 +122,14 @@ PATRON_UUID = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-
 
 
 def validar_numero_identificacion(tipo: str, numero: str) -> str:
-    numero = numero.strip()
+    numero = numero.strip().upper()
     rango = _LONGITUD_IDENTIFICACION.get(tipo)
+    if tipo == "02" and numero.isalnum() and not numero.isdigit():
+        # Desde la actualización 4.4 de abril 2026 la cédula jurídica puede traer letras
+        # (formato nuevo del Registro Nacional): 10 caracteres
+        if len(numero) != 10:
+            raise ValueError("Una cédula jurídica debe tener 10 caracteres")
+        return numero
     if rango:
         if not numero.isdigit():
             raise ValueError("La identificación debe contener solo dígitos")
@@ -92,8 +153,13 @@ class UbicacionRequest(BaseModel):
     otras_senas: str = Field(min_length=1, max_length=250)
 
 
+# Nombre que se usa cuando el cliente da su cédula pero no quiere su nombre en la factura
+NOMBRE_RECEPTOR_GENERICO = "Consumidor final"
+
+
 class PersonaRequest(BaseModel):
-    nombre: str = Field(min_length=1, max_length=100)
+    # Opcional solo para el receptor (se usa NOMBRE_RECEPTOR_GENERICO); el proveedor lo exige
+    nombre: Optional[str] = Field(default=None, max_length=100)
     tipo_identificacion: Optional[TipoIdentificacion] = None
     numero_identificacion: Optional[str] = Field(default=None, min_length=1, max_length=20)
     identificacion_extranjero: Optional[str] = Field(default=None, max_length=20)
@@ -101,12 +167,13 @@ class PersonaRequest(BaseModel):
     ubicacion: Optional[UbicacionRequest] = None
     otras_senas_extranjero: Optional[str] = Field(default=None, max_length=300)
     telefono_codigo_pais: str = Field(default="506", pattern=r"^\d{1,3}$")
-    telefono: Optional[str] = Field(default=None, pattern=r"^\d{8,20}$")
+    telefono: Optional[str] = Field(default=None, pattern=r"^\d{3,20}$")
     correo: Optional[EmailStr] = None
     codigo_actividad: Optional[str] = Field(default=None, pattern=PATRON_ACTIVIDAD)
 
     @model_validator(mode="after")
     def validar_identificacion(self):
+        self.nombre = (self.nombre or "").strip() or None
         if not self.numero_identificacion and self.identificacion_extranjero:
             # En v4.4 los extranjeros se identifican con tipo 05 (Extranjero No Domiciliado)
             self.tipo_identificacion = "05"
@@ -299,14 +366,39 @@ class MedioPagoRequest(BaseModel):
 
 
 class ReferenciaRequest(BaseModel):
-    """Documento al que hace referencia una nota de crédito/débito u otro comprobante."""
-    tipo_documento: str = Field(pattern=Cod2)
-    tipo_documento_otro: Optional[str] = Field(default=None, max_length=100)
-    numero: Optional[str] = Field(default=None, min_length=1, max_length=50, description="Clave de 50 dígitos del documento referido")
+    """
+    Documento al que hace referencia una nota de crédito/débito u otro comprobante
+    (InformacionReferencia). Códigos según las notas 9 y 10 de Anexos y Estructuras 4.4.
+    """
+    tipo_documento: str = Field(pattern=Cod2, description="Nota 10: " + ", ".join(f"{k} {v}" for k, v in TIPOS_DOC_REFERENCIA.items()))
+    tipo_documento_otro: Optional[str] = Field(default=None, max_length=100, description="Obligatorio con tipo_documento 99")
+    numero: Optional[str] = Field(default=None, min_length=1, max_length=50, description="Clave de 50 caracteres del documento referido")
     fecha_emision: datetime
-    codigo: Optional[str] = Field(default=None, pattern=Cod2, description="01 Anula, 02 Corrige texto, 04 Referencia, 06 Devolución...")
-    codigo_otro: Optional[str] = Field(default=None, max_length=100)
+    codigo: Optional[str] = Field(default=None, pattern=Cod2, description="Nota 9: " + ", ".join(f"{k} {v}" for k, v in CODIGOS_REFERENCIA.items()))
+    codigo_otro: Optional[str] = Field(default=None, max_length=100, description="Obligatorio con codigo 99")
     razon: Optional[str] = Field(default=None, max_length=180)
+
+    @model_validator(mode="after")
+    def validar_catalogos(self):
+        if self.tipo_documento not in TIPOS_DOC_REFERENCIA:
+            raise ValueError(f"tipo_documento de referencia {self.tipo_documento} no existe en la nota 10 de Hacienda")
+        if self.codigo is not None and self.codigo not in CODIGOS_REFERENCIA:
+            raise ValueError(f"codigo de referencia {self.codigo} no existe en la nota 9 de Hacienda")
+        # El código es obligatorio salvo en "facturación mes vencido" (tipo 13)
+        if self.codigo is None and self.tipo_documento != "13":
+            raise ValueError("Indique 'codigo' de referencia (nota 9), p. ej. 01 anula, 13 anula por error material")
+        if self.tipo_documento == "99" and len((self.tipo_documento_otro or "").strip()) < 5:
+            raise ValueError("Con tipo_documento 99 describa el documento en 'tipo_documento_otro' (5 a 100 caracteres)")
+        if self.codigo == "99" and len((self.codigo_otro or "").strip()) < 5:
+            raise ValueError("Con codigo 99 describa el motivo en 'codigo_otro' (5 a 100 caracteres)")
+        if self.tipo_documento in TIPOS_REFERENCIA_CON_CLAVE and not re.fullmatch(PATRON_CLAVE, self.numero or ""):
+            raise ValueError(
+                f"Con tipo_documento {self.tipo_documento} ({TIPOS_DOC_REFERENCIA[self.tipo_documento]}) 'numero' "
+                "debe ser la clave de 50 caracteres del comprobante referido")
+        limite = datetime.now(self.fecha_emision.tzinfo) - timedelta(days=365 * ANTIGUEDAD_MAXIMA_REFERENCIA_ANIOS + 2)
+        if self.fecha_emision < limite:
+            raise ValueError(f"La fecha del documento de referencia no puede tener más de {ANTIGUEDAD_MAXIMA_REFERENCIA_ANIOS} años")
+        return self
 
 
 class FacturaRequest(BaseModel):
@@ -367,6 +459,10 @@ class FacturaRequest(BaseModel):
         t = self.tipo_documento
         if t in ("01", "09") and self.receptor is None:
             raise ValueError("Este comprobante requiere receptor (use tipo_documento 04 para tiquete)")
+        if self.receptor is not None and not self.receptor.nombre:
+            self.receptor.nombre = NOMBRE_RECEPTOR_GENERICO
+        if self.proveedor is not None and not self.proveedor.nombre:
+            raise ValueError("Indique el nombre del proveedor")
         if t == "08":
             if self.proveedor is None:
                 raise ValueError("La factura de compra (08) requiere 'proveedor'")
@@ -377,7 +473,7 @@ class FacturaRequest(BaseModel):
                 )
             # Hacienda exige Numero con estructura de consecutivo (20) o clave (50)
             for ref in self.referencias:
-                if not ref.numero or not re.fullmatch(r"\d{20}|\d{50}", ref.numero):
+                if not ref.numero or not re.fullmatch(r"\d{20}|" + PATRON_CLAVE, ref.numero):
                     raise ValueError(
                         "En la factura de compra la referencia debe indicar 'numero': consecutivo (20 dígitos) "
                         "o clave (50 dígitos) del documento del proveedor"
@@ -386,6 +482,7 @@ class FacturaRequest(BaseModel):
             raise ValueError("'proveedor' solo aplica a la factura de compra (08)")
         if t in ("02", "03") and not self.referencias:
             raise ValueError("Las notas de crédito/débito requieren 'referencia' al documento original")
+        self._validar_codigos_referencia(t)
         # Reglas que aplica Hacienda (verificadas en el sandbox)
         for i, p in enumerate(self.productos, start=1):
             if p.tarifa_iva_principal == "05" and t not in ("02", "03"):
@@ -408,6 +505,26 @@ class FacturaRequest(BaseModel):
             raise ValueError("tipo_otros es obligatorio con medio de pago 99")
         return self
 
+    def _validar_codigos_referencia(self, t: str) -> None:
+        """Uso de cada código de referencia según el tipo de comprobante (notas 9 y 10)."""
+        es_nota = t in ("02", "03")
+        for ref in self.referencias:
+            c = ref.codigo
+            if c == "17":
+                raise ValueError("El código de referencia 17 (pago a comprobante) es exclusivo del recibo electrónico "
+                                 "de pago: use POST /facturas/{id}/recibo-pago")
+            if ref.tipo_documento == "16" and t != "08":
+                raise ValueError("El tipo de referencia 16 (proveedor no domiciliado) solo se usa en la factura de compra (08)")
+            if c in CODIGOS_ERROR_MATERIAL and not es_nota:
+                raise ValueError(
+                    f"El código {c} ({CODIGOS_REFERENCIA[c]}) solo se usa en notas de crédito o débito. "
+                    "El comprobante nuevo que sustituye al anulado por error material lleva el código 15")
+            if c == "12" and t != "03":
+                raise ValueError("El código 12 (crédito por exoneración posterior) solo se usa en notas de crédito")
+            if c in ("15", "16") and es_nota:
+                raise ValueError(f"El código {c} ({CODIGOS_REFERENCIA[c]}) lo lleva el comprobante nuevo que sustituye, "
+                                 "no una nota de crédito o débito")
+
 
 class ReciboPagoRequest(BaseModel):
     """Pago (total o parcial) de una factura a crédito con condición 08 o 10."""
@@ -427,6 +544,12 @@ class ReciboPagoRequest(BaseModel):
 class AnularRequest(BaseModel):
     razon: str = Field(min_length=1, max_length=180)
     referencia_externa: Optional[str] = Field(default=None, max_length=100)
+    codigo: Literal["01", "13"] = Field(
+        default="01",
+        description="01 Anulación (devolución, acuerdo con el cliente): el ajuste va al mes de la nota. "
+                    "13 Error material (cliente equivocado, factura duplicada o mal hecha): el ajuste va al mes "
+                    "de la factura original y puede obligar a rectificar esa declaración de IVA.",
+    )
 
 
 class CorreoRequest(BaseModel):
@@ -468,6 +591,10 @@ class FacturaDetalleResponse(BaseModel):
     total_iva_devuelto: Decimal = Decimal("0")
     condicion_venta: Optional[str] = None
     factura_origen_id: Optional[str] = None
+    codigo_referencia: Optional[str] = Field(default=None, description="Código de referencia (nota 9) del comprobante")
+    referencia_clave: Optional[str] = Field(default=None, description="Clave del comprobante al que hace referencia")
+    periodo_fiscal: Optional[date] = Field(
+        default=None, description="Mes al que va su efecto contable. En notas con código 13 o 14 es el mes del comprobante original")
 
 
 class EventoResponse(BaseModel):
@@ -486,7 +613,7 @@ class EmisorBase(BaseModel):
     codigo_actividad: str = Field(pattern=PATRON_ACTIVIDAD)
     correo: EmailStr
     telefono_codigo_pais: Optional[str] = Field(default="506", pattern=r"^\d{1,3}$")
-    telefono: Optional[str] = Field(default=None, pattern=r"^\d{8,20}$")
+    telefono: Optional[str] = Field(default=None, pattern=r"^\d{3,20}$")
     provincia: str = Field(pattern=r"^[1-7]$")
     canton: str = Field(pattern=r"^\d{2}$")
     distrito: str = Field(pattern=r"^\d{2}$")
@@ -516,7 +643,7 @@ class EmisorActualizar(BaseModel):
     codigo_actividad: Optional[str] = Field(default=None, pattern=PATRON_ACTIVIDAD)
     correo: Optional[EmailStr] = None
     telefono_codigo_pais: Optional[str] = Field(default=None, pattern=r"^\d{1,3}$")
-    telefono: Optional[str] = Field(default=None, pattern=r"^\d{8,20}$")
+    telefono: Optional[str] = Field(default=None, pattern=r"^\d{3,20}$")
     provincia: Optional[str] = Field(default=None, pattern=r"^[1-7]$")
     canton: Optional[str] = Field(default=None, pattern=r"^\d{2}$")
     distrito: Optional[str] = Field(default=None, pattern=r"^\d{2}$")
@@ -528,7 +655,7 @@ class EmisorActualizar(BaseModel):
     ambiente: Optional[Ambiente] = None
     activo: Optional[bool] = None
     facturacion_web: Optional[bool] = Field(
-        default=None, description="Facturación en línea (emitir, catálogos e inventario) para los usuarios de la empresa")
+        default=None, description="Panel web para los usuarios de la empresa (servicio adicional; sin él solo factura por API)")
     acceso_api: Optional[bool] = Field(
         default=None, description="Conexión por API: el sistema de facturación del cliente usa sus llaves")
 
@@ -733,6 +860,12 @@ class PlanResponse(PlanCrear):
     activo: bool
 
 
+# Comprobante que la plataforma emite al cliente por una venta
+ComprobanteVenta = Literal["01", "04", "ninguno"]
+MedioPagoVenta = Literal["01", "02", "03", "04", "06", "07"]   # sin 99: exige describir el medio
+DESCRIPCION_COMPROBANTE = "01 factura, 04 tiquete o 'ninguno'. Por defecto el de los ajustes de ventas (solo si el precio es mayor que 0)"
+
+
 class AcreditarRequest(BaseModel):
     """Acredita un paquete a una empresa: desde un plan o con cantidad libre (p. ej. cortesía)."""
     plan_id: Optional[str] = None
@@ -743,6 +876,8 @@ class AcreditarRequest(BaseModel):
     nombre: Optional[str] = Field(default=None, max_length=80)
     referencia_pago: Optional[str] = Field(default=None, max_length=100, description="Comprobante SINPE, transferencia…")
     notas: Optional[str] = Field(default=None, max_length=1000)
+    comprobante: Optional[ComprobanteVenta] = Field(default=None, description=DESCRIPCION_COMPROBANTE)
+    medio_pago: Optional[MedioPagoVenta] = Field(default=None, description="Por defecto el de los ajustes de ventas")
 
     @model_validator(mode="after")
     def validar(self):
@@ -761,7 +896,7 @@ class ClienteDatos(BaseModel):
     nombre: str = Field(min_length=1, max_length=100)
     nombre_comercial: Optional[str] = Field(default=None, max_length=80)
     correo: Optional[EmailStr] = None
-    telefono: Optional[str] = Field(default=None, pattern=r"^\d{8,20}$")
+    telefono: Optional[str] = Field(default=None, pattern=r"^\d{3,20}$")
     codigo_actividad: Optional[str] = Field(default=None, pattern=PATRON_ACTIVIDAD)
     provincia: Optional[str] = Field(default=None, pattern=r"^[1-7]$")
     canton: Optional[str] = Field(default=None, pattern=r"^\d{2}$")
@@ -958,9 +1093,41 @@ class BorradorResponse(BaseModel):
 
 class SuscripcionRequest(BaseModel):
     """Cobro del alquiler de un servicio por N meses (aparte de los documentos)."""
-    servicio: Literal["api", "facturacion_web"] = Field(description="api = conexión por API, facturacion_web = facturación en línea")
+    servicio: Literal["api", "facturacion_web"] = Field(description="api = conexión por API, facturacion_web = panel web")
     meses: int = Field(default=1, ge=1, le=36)
-    precio: Decimal = Field(ge=0, max_digits=18, decimal_places=2, description="Total cobrado por el período (0 = cortesía)")
+    precio: Decimal = Field(default=Decimal("0"), ge=0, max_digits=18, decimal_places=2,
+                            description="Total cobrado por el período (0 = cortesía)")
+    regalia: bool = Field(default=False, description="Sin costo y sin vencimiento (ignora meses y precio)")
     moneda: Literal["CRC", "USD"] = "CRC"
     referencia_pago: Optional[str] = Field(default=None, max_length=100, description="Comprobante SINPE, transferencia…")
     notas: Optional[str] = Field(default=None, max_length=1000)
+    comprobante: Optional[ComprobanteVenta] = Field(default=None, description=DESCRIPCION_COMPROBANTE)
+    medio_pago: Optional[MedioPagoVenta] = Field(default=None, description="Por defecto el de los ajustes de ventas")
+
+
+class AjustesVentasRequest(BaseModel):
+    """Cómo factura la plataforma sus ventas a las empresas cliente."""
+    emisor_ventas_id: Optional[str] = Field(default=None, pattern=PATRON_UUID,
+                                            description="Empresa que emite el comprobante (null = no emitir)")
+    codigo_cabys: Optional[str] = Field(default=None, pattern=r"^\d{13}$")
+    codigo_tarifa_iva: str = "08"
+    precio_incluye_iva: bool = True
+    tipo_comprobante: Literal["01", "04"] = "01"
+    medio_pago: MedioPagoVenta = "04"
+    instrucciones_pago: Optional[str] = Field(default=None, max_length=1000,
+                                              description="Cuentas IBAN, SINPE Móvil… (van en los avisos al cliente)")
+    contacto_ventas: Optional[str] = Field(default=None, max_length=200, description="Teléfono, WhatsApp o correo para comprar")
+    correo_avisos: Optional[EmailStr] = Field(default=None, description="Recibe copia de cada aviso enviado a un cliente")
+
+    @field_validator("codigo_tarifa_iva")
+    @classmethod
+    def tarifa_conocida(cls, v):
+        if v not in TARIFAS_IVA:
+            raise ValueError("codigo_tarifa_iva inválido")
+        return v
+
+    @model_validator(mode="after")
+    def validar(self):
+        if self.emisor_ventas_id and not self.codigo_cabys:
+            raise ValueError("Indique el CABYS del servicio que se factura")
+        return self

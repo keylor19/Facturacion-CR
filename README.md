@@ -63,9 +63,20 @@ Ingrese en `http://localhost:8000/panel/` (en producción, por HTTPS). Desde el 
 Las sesiones duran `SESION_HORAS`; tras `MAX_INTENTOS_LOGIN` intentos fallidos el usuario se bloquea `MINUTOS_BLOQUEO_LOGIN` minutos.
 
 ### Venta por consumo (paquetes de documentos)
+Es un **API de consumo**: quien se conecta primero compra documentos y luego factura.
 Cada empresa compra **paquetes de documentos**; cada documento firmado y
 enviado a Hacienda (comprobantes, recibos de pago y mensajes receptor)
 descuenta 1. Sin saldo la emisión responde `402`.
+
+Para que la llave de una empresa funcione hacen falta dos cosas (con
+`CONTROL_SALDO` y `CONTROL_SUSCRIPCIONES` activos, que es lo predeterminado):
+
+| Requisito | Si falta | Cómo se activa |
+|---|---|---|
+| Servicio **Conexión por API** vigente (mensualidad o regalía) | `403` "no tiene contratado el servicio" | `POST /api/v1/emisores/{id}/suscripciones` `{"servicio": "api", "meses": 1, "precio": ...}` o `"regalia": true` |
+| **Documentos** disponibles | `402` "Saldo de documentos agotado" | `POST /api/v1/emisores/{id}/paquetes` |
+
+El **panel web** es un servicio aparte y opcional (`"servicio": "facturacion_web"`).
 - **Planes y ventas** (panel) o `POST /api/v1/planes`: catálogo con cantidad, precio y vigencia.
 - **Empresas → Vender paquete** (panel) o `POST /api/v1/emisores/{id}/paquetes`
   (`plan_id` o `documentos`/`precio`, `referencia_pago`): se registra tras confirmar el pago (SINPE, transferencia).
@@ -106,11 +117,34 @@ curl -X PUT localhost:8000/api/v1/emisores/$ID/credenciales-hacienda -H "$H" -H 
 curl -X POST localhost:8000/api/v1/emisores/$ID/probar-conexion -H "$H"
 # 4) Llave para el sistema de facturación de esa empresa (se muestra una sola vez)
 curl -X POST localhost:8000/api/v1/api-keys -H "$H" -H "Content-Type: application/json" -d '{"nombre": "POS", "emisor_id": "'$ID'"}'
+# 5) Cobrar antes de que facture: servicio API y paquete de documentos (sin esto: 403 / 402)
+curl -X POST localhost:8000/api/v1/emisores/$ID/suscripciones -H "$H" -H "Content-Type: application/json"      -d '{"servicio": "api", "meses": 1, "precio": "10000", "referencia_pago": "SINPE 12345"}'
+curl -X POST localhost:8000/api/v1/emisores/$ID/paquetes -H "$H" -H "Content-Type: application/json"      -d '{"documentos": 500, "precio": "15000", "referencia_pago": "SINPE 12345"}'
 ```
 Con la llave de administrador se puede operar sobre cualquier empresa
 enviando el header `X-Emisor-Id`. Cuando la empresa pase a producción:
 `PATCH /api/v1/emisores/{id}` con `{"ambiente": "prod"}` y cargar las
 credenciales de producción.
+
+## Cómo está organizado el código
+
+| Carpeta | Qué contiene |
+|---|---|
+| `api/main.py` | Arma la aplicación: rutas, panel, encabezados de seguridad y límite de solicitudes |
+| `api/routes/` | Un archivo por grupo de endpoints (`facturas`, `recepcion`, `saldo`, `hacienda`...). Solo validan, autorizan y llaman a un servicio |
+| `api/services/` | La lógica de negocio. Los centrales: `emision.py` (crear, firmar, cobrar y guardar un comprobante), `xml_generator.py` (XML v4.4 y cálculos de impuestos), `firma.py` (XAdES-EPES), `hacienda_client.py` (envío y consulta), `saldo.py` y `suscripciones.py` (cobro por consumo), `reportes.py` (IVA y libros) |
+| `api/models/` | `database.py` (tablas) y `schemas.py` (lo que acepta y devuelve el API, con las reglas de Hacienda y sus catálogos) |
+| `api/security.py` | Autenticación (API key, sesión del panel) y qué empresa y servicio puede usar cada quien |
+| `api/panel/` | Panel web en JavaScript sin frameworks; cada pantalla en `js/vistas/` |
+| `workers/` | Tareas en segundo plano (Celery): envío a Hacienda, consultas, correos, webhooks y tareas programadas |
+| `migrations/` | Cambios de la base de datos (Alembic), uno por versión |
+| `config/settings.py` | Todas las variables de configuración, con su explicación |
+| `tests/` | Pruebas automáticas (`pytest`) |
+| `xsd/` | Esquemas oficiales de Hacienda (no se versionan; ver `xsd/LEEME.md`) |
+
+Recorrido de una factura: `POST /api/v1/facturas` → `routes/facturas.py` → `services/emision.py`
+(saldo, consecutivo, clave, XML, firma, cobro de 1 documento, guardado) → cola de Celery →
+`workers/tasks.py` envía a Hacienda y consulta el estado → webhook y correo al cliente.
 
 ## 4. Emitir
 ```bash

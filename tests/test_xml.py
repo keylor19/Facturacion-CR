@@ -330,7 +330,7 @@ def test_bienes_usados_sin_factor_falla():
 
 
 def test_iva_devuelto_resta_del_total():
-    _, _, t = _generar(tipo_documento="04", receptor=None, iva_devuelto="1000")
+    _, _, t = _generar(tipo_documento="04", receptor=None, iva_devuelto="1000", medios_pago=[{"tipo": "02"}])
     assert t.comprobante == Decimal("116700") - Decimal("1000")
 
 
@@ -377,3 +377,19 @@ def test_factura_de_compra_exige_numero_de_referencia():
     with pytest.raises(ValidationError, match="numero"):
         FacturaRequest(**factura_payload(tipo_documento="08", receptor=None, proveedor=proveedor, referencia={
             "tipo_documento": "14", "fecha_emision": "2026-08-20T10:00:00", "codigo": "04"}))
+
+
+def test_receptor_sin_nombre_usa_nombre_generico():
+    # El cliente da la cédula pero no quiere su nombre: sale un nombre genérico y sin correo
+    root, _, _ = _generar(receptor={"nombre": "  ", "tipo_identificacion": "01", "numero_identificacion": "206890580"})
+    assert _texto(root, "Receptor/Nombre") == "Consumidor final"
+    assert _texto(root, "Receptor/Identificacion/Numero") == "206890580"
+    assert _texto(root, "Receptor/CorreoElectronico") is None
+
+
+def test_proveedor_sin_nombre_se_rechaza():
+    with pytest.raises(ValidationError, match="nombre del proveedor"):
+        FacturaRequest(**factura_payload(tipo_documento="08", receptor=None,
+                                         proveedor={"tipo_identificacion": "01", "numero_identificacion": "206890580"},
+                                         referencia={"tipo_documento": "14", "numero": "0" * 20, "codigo": "04",
+                                                     "fecha_emision": "2026-08-01T00:00:00", "razon": "x"}))

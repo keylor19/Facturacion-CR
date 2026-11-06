@@ -71,7 +71,7 @@ def registrar_documento(db: Session, emisor: Emisor, xml: bytes, respuesta: byte
         raise EmisionError(422, f"Tipo de documento no admite mensaje receptor: {raiz}")
 
     clave = _texto(root, "Clave") or ""
-    if not re.fullmatch(r"\d{50}", clave):
+    if not re.fullmatch(r"[A-Za-z0-9]{50}", clave):
         raise EmisionError(422, "El XML no tiene una clave válida")
 
     receptor_numero = _texto(root, "Receptor/Identificacion/Numero")
@@ -147,8 +147,9 @@ def crear_mensaje_receptor(db: Session, doc: DocumentoRecibido, req: MensajeRece
     verificar_saldo(db, emisor)
 
     tiene_impuesto = doc.total_impuesto > 0
-    condicion = req.condicion_impuesto
-    acreditar = req.monto_impuesto_acreditar
+    # Sin impuesto no hay condición ni crédito que declarar (se ignora si la envían)
+    condicion = req.condicion_impuesto if tiene_impuesto else None
+    acreditar = req.monto_impuesto_acreditar if tiene_impuesto else None
     gasto = req.monto_gasto_aplicable
     if req.mensaje in ("1", "2") and tiene_impuesto:
         if not condicion:

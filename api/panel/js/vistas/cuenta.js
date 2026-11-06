@@ -1,3 +1,4 @@
+// Mi usuario: cambio de contraseña y verificación en dos pasos.
 import { api, sesion } from '../api.js';
 import { h, vaciar, conBoton, toast, campo, aviso } from '../dom.js';
 import { contexto, enrutar } from '../app.js';

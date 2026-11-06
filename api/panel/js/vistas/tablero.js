@@ -1,3 +1,4 @@
+// Inicio de la empresa: accesos rápidos, avisos (saldo, certificado), números del mes y últimos comprobantes.
 import { api } from '../api.js';
 import { h, vaciar, dinero, fecha, badge, mesActual, selectorMes, tabla, TIPOS, ESTADOS } from '../dom.js';
 import { contexto, empresaActual } from '../app.js';
@@ -20,14 +21,19 @@ export async function vistaTablero(cont) {
           h('a', { href: '#/saldo' }, 'Ver saldo')));
       } else if (emp.saldo_documentos <= contexto.saldoAlerta) {
         avisos.push(h('div', { class: 'aviso alerta' }, `Quedan ${emp.saldo_documentos} documentos disponibles. `,
-          h('a', { href: '#/saldo' }, 'Ver saldo')));
+          h('a', { href: '#/saldo' }, 'Ver saldo y recargar')));
       }
     }
     if (emp && !emp.tiene_certificado) {
-      avisos.push(h('div', { class: 'aviso alerta' }, 'Esta empresa no tiene certificado digital cargado; no podrá emitir.'));
+      avisos.push(h('div', { class: 'aviso alerta' }, 'Esta empresa no tiene certificado digital cargado; no podrá emitir. ',
+        h('a', { href: contexto.esAdmin ? `#/empresas/${emp.id}` : '#/configuracion/cuenta' }, 'Revisar datos de la empresa')));
     } else if (emp?.cert_vence) {
       const dias = Math.floor((new Date(emp.cert_vence) - new Date()) / 86400000);
-      if (dias < 30) avisos.push(h('div', { class: 'aviso alerta' }, `El certificado digital vence en ${dias} días (${fecha(emp.cert_vence, false)}).`));
+      if (dias < 30) {
+        avisos.push(h('div', { class: 'aviso alerta' }, `El certificado digital vence en ${dias} días (${fecha(emp.cert_vence, false)}). `
+          + 'Renuévelo en el BCCR o en su banco y cárguelo de nuevo. ',
+        h('a', { href: contexto.esAdmin ? `#/empresas/${emp.id}` : '#/configuracion/cuenta' }, 'Ir a datos de la empresa')));
+      }
     }
 
     const total = Object.values(est.comprobantes_por_estado).reduce((a, b) => a + b, 0);
@@ -38,13 +44,13 @@ export async function vistaTablero(cont) {
         kpi('IVA de ventas', dinero(est.iva_ventas_crc)),
         kpi('Comprobantes emitidos', total),
         kpi('Con error o rechazados', est.con_error_o_rechazados, est.con_error_o_rechazados > 0, '#/comprobantes'),
-        kpi('Facturas de proveedores sin responder', est.recibidos_sin_responder, est.recibidos_sin_responder > 0, '#/recepcion')),
+        kpi('Facturas de proveedores por aceptar', est.recibidos_sin_responder, est.recibidos_sin_responder > 0, '#/recepcion')),
       h('div', { class: 'campos dos' },
         h('section', { class: 'tarjeta' }, h('h2', {}, 'Por estado'),
           tabla([{ titulo: 'Estado', valor: (r) => badge(r[0]) }, { titulo: 'Cantidad', num: true, valor: (r) => r[1] }],
             Object.entries(est.comprobantes_por_estado))),
         h('section', { class: 'tarjeta' }, h('h2', {}, 'Por tipo'),
-          tabla([{ titulo: 'Tipo', valor: (r) => r[0] }, { titulo: 'Cantidad', num: true, valor: (r) => r[1] }],
+          tabla([{ titulo: 'Tipo', valor: (r) => TIPOS[r[0]] || r[0] }, { titulo: 'Cantidad', num: true, valor: (r) => r[1] }],
             Object.entries(est.comprobantes_por_tipo)))),
       h('section', { class: 'tarjeta' },
         h('div', { class: 'encabezado' }, h('h2', {}, 'Últimos comprobantes'), h('a', { href: '#/comprobantes' }, 'Ver todos')),
@@ -59,8 +65,10 @@ export async function vistaTablero(cont) {
   }
 
   vaciar(cont,
-    h('div', { class: 'encabezado' }, h('h1', {}, 'Tablero'),
+    h('div', { class: 'encabezado' }, h('div', {}, h('h1', {}, 'Inicio'),
+      h('p', { class: 'suave ayuda-tipo' }, '¿Qué desea hacer hoy?')),
       selectorMes(periodo, (p) => { periodo = p; cargar(); })),
+    accesosRapidos(),
     cuerpo);
   await cargar();
 }
@@ -68,4 +76,18 @@ export async function vistaTablero(cont) {
 function kpi(etiqueta, valor, alerta = false, enlace = null) {
   const caja = h('div', { class: `kpi ${alerta ? 'alerta' : ''}` }, h('div', { class: 'etiqueta' }, etiqueta), h('div', { class: 'valor' }, valor));
   return enlace ? h('a', { href: enlace, class: 'enlace-kpi' }, caja) : caja;
+}
+
+// Botones grandes con lo que más se hace, para no tener que buscar en el menú
+function accesosRapidos() {
+  const facturacion = empresaActual()?.facturacion_web !== false || contexto.esAdmin;
+  const accesos = [
+    facturacion && ['#/factura-rapida', 'Factura rápida', 'Venta de contado'],
+    facturacion && ['#/emitir/01', 'Factura electrónica', 'Cliente con cédula'],
+    facturacion && ['#/emitir/04', 'Tiquete', 'Consumidor final'],
+    ['#/comprobantes', 'Mis documentos', 'Ver, reenviar o anular'],
+    ['#/recepcion', 'Facturas de proveedores', 'Aceptar o rechazar'],
+  ].filter(Boolean);
+  return h('div', { class: 'accesos' }, accesos.map(([href, titulo, ayuda], i) => h('a', { href, class: `acceso ${i === 0 ? 'principal' : ''}` },
+    h('strong', {}, titulo), h('span', {}, ayuda))));
 }

@@ -45,6 +45,17 @@ def _caso(nombre):
         p.update(tipo_documento="03", referencia=REF)
     elif nombre == "nota_debito":
         p.update(tipo_documento="02", referencia=dict(REF, codigo="04"))
+    # Códigos de la actualización del 22-04-2026 (obligatorios desde el 01-11-2026)
+    elif nombre == "nota_credito_error_material":
+        p.update(tipo_documento="03", referencia=dict(REF, codigo="13"))
+    elif nombre == "nota_debito_error_material":
+        p.update(tipo_documento="02", referencia=dict(REF, codigo="14"))
+    elif nombre == "nota_credito_a_exportacion":
+        p.update(tipo_documento="03", referencia=dict(REF, tipo_documento="19"))
+    elif nombre == "sustituye_por_error_material":
+        p.update(referencia=dict(REF, codigo="15"))
+    elif nombre == "sustituye_rechazado":
+        p.update(referencia=dict(REF, tipo_documento="10", codigo="16"))
     elif nombre == "compra":
         p.update(tipo_documento="08", receptor=None, proveedor=PROVEEDOR,
                  referencia=dict(REF, tipo_documento="14", numero="00100001010000000001", codigo="04"))
@@ -62,7 +73,9 @@ def _xsd_dir(monkeypatch):
 
 
 @pytest.mark.parametrize("nombre", ["factura", "factura_completa", "exoneracion", "selectivo", "tiquete",
-                                    "nota_credito", "nota_debito", "compra", "exportacion"])
+                                    "nota_credito", "nota_debito", "compra", "exportacion",
+                                    "nota_credito_error_material", "nota_debito_error_material",
+                                    "nota_credito_a_exportacion", "sustituye_por_error_material", "sustituye_rechazado"])
 def test_documento_cumple_xsd_oficial(nombre):
     datos = _caso(nombre)
     consecutivo = f"00100001{datos.tipo_documento}0000000001"
@@ -132,6 +145,6 @@ def test_recibo_pago_cumple_xsd():
         "11", "CRC", None,
         [LineaRecibo("Pago factura (IVA 13%)", Decimal("1000"), "08", Decimal("13"), Decimal("130"))],
         [MedioPagoRequest(tipo="04")],
-        {"tipo_documento": "01", "numero": "5" * 50, "fecha_emision": ahora_cr(), "codigo": "04", "razon": "Pago"},
+        {"tipo_documento": "01", "numero": "5" * 50, "fecha_emision": ahora_cr(), "codigo": "17", "razon": "Pago"},
     )
     validar_xsd(firmar_xml(xml, P12, CERT_PASSWORD), "10")

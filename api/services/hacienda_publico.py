@@ -33,7 +33,7 @@ from sqlalchemy import delete, func, select, or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 
-from api.models.database import Cliente, Emisor, RegistroHacienda, SessionLocal, TipoCambioDiario, gen_uuid, utcnow
+from api.models.database import Cliente, Emisor, Factura, RegistroHacienda, SessionLocal, TipoCambioDiario, gen_uuid, utcnow
 from api.services import catalogo_cabys
 from api.services.cache import obtener_json, guardar_json, redis_client
 from config.settings import get_settings
@@ -313,8 +313,8 @@ def verificar_muestra_cabys(cantidad: int = 30, pausa: float = 0.5) -> dict:
 
 
 def _identificacion(identificacion: str) -> str:
-    if not re.fullmatch(r"\d{9,12}", identificacion or ""):
-        raise HaciendaPublicoError("Identificación inválida: 9 a 12 dígitos, sin guiones", status_code=422)
+    if not re.fullmatch(r"[0-9A-Za-z]{9,12}", identificacion or ""):
+        raise HaciendaPublicoError("Identificación inválida: 9 a 12 caracteres, sin guiones", status_code=422)
     return identificacion
 
 
@@ -450,6 +450,83 @@ def productor(identificacion: str) -> dict:
                 raise
             resultado[nombre] = None
     resultado["registrado"] = bool(resultado["agropecuario"] or resultado["pesca"])
+    return resultado
+
+
+def _autorizaciones_usadas(s, emisor_id: str, identificacion: str) -> set[str]:
+    """Números de exoneración que la empresa ya aplicó en sus comprobantes a ese cliente."""
+    usadas = set()
+    for datos in s.scalars(select(Factura.json_original).where(
+            Factura.emisor_id == emisor_id, Factura.receptor_identificacion == identificacion,
+            Factura.json_original.is_not(None)).order_by(Factura.fecha_emision.desc()).limit(500)):
+        for producto in datos.get("productos") or []:
+            numero = (producto.get("exoneracion") or {}).get("numero_documento")
+            if numero:
+                usadas.add(str(numero).upper())
+    return usadas
+
+
+def exoneraciones_conocidas(identificacion: str, emisor_id: str | None = None) -> list[dict]:
+    """
+    Exoneraciones conocidas de una identificación. Hacienda solo permite buscarlas
+    por número de autorización, no por cédula. Una empresa (emisor_id) ve solo las
+    que ella misma ya usó con ese cliente: las consultas de otras empresas no se
+    comparten. El administrador (emisor_id None) ve todas las consultadas.
+    """
+    _identificacion(identificacion)
+    hoy = utcnow().date().isoformat()
+    try:
+        with SessionLocal() as s:
+            filtro = [RegistroHacienda.tipo == "ex", RegistroHacienda.encontrado.is_(True),
+                      RegistroHacienda.datos["identificacion"].astext == identificacion]
+            if emisor_id:
+                usadas = _autorizaciones_usadas(s, emisor_id, identificacion)
+                if not usadas:
+                    return []
+                filtro.append(RegistroHacienda.clave.in_(usadas))
+            registros = s.scalars(select(RegistroHacienda).where(*filtro)).all()
+    except SQLAlchemyError as exc:
+        logger.warning("No se pudieron leer las exoneraciones guardadas de %s: %s", identificacion, exc)
+        return []
+    lista = []
+    for r in registros:
+        d = r.datos or {}
+        vence = str(d.get("fechaVencimiento") or "")[:10] or None
+        lista.append({
+            "autorizacion": d.get("numeroDocumento") or r.clave,
+            "porcentaje": d.get("porcentajeExoneracion"),
+            "tipo_documento": (d.get("tipoDocumento") or {}).get("descripcion"),
+            "institucion": d.get("nombreInstitucion"),
+            "fecha_emision": str(d.get("fechaEmision") or "")[:10] or None,
+            "vence": vence,
+            "vigente": vence is None or vence >= hoy,
+            "cantidad_cabys": len(d.get("cabys") or []),
+            "actualizado_en": r.actualizado_en.isoformat(),
+        })
+    return sorted(lista, key=lambda e: (not e["vigente"], e["vence"] or ""))
+
+
+def ficha(identificacion: str, emisor_id: str | None = None) -> dict:
+    """
+    Todo lo que se sabe de una cédula en una sola consulta: situación tributaria
+    y actividades, registro como productor (MAG / INCOPESCA) y exoneraciones.
+    Cada parte se consulta aparte: si una falla, las demás se devuelven igual.
+    """
+    _identificacion(identificacion)
+    resultado = {"identificacion": identificacion, "contribuyente": None, "inscrito": False,
+                 "productor": None, "exoneraciones": exoneraciones_conocidas(identificacion, emisor_id),
+                 "errores": {}}
+    try:
+        c = contribuyente(identificacion)
+        resultado["contribuyente"] = c
+        resultado["inscrito"] = ((c.get("situacion") or {}).get("estado") or "").lower() == "inscrito"
+    except HaciendaPublicoError as exc:
+        if exc.status_code != 404:
+            resultado["errores"]["contribuyente"] = str(exc)
+    try:
+        resultado["productor"] = productor(identificacion)
+    except HaciendaPublicoError as exc:
+        resultado["errores"]["productor"] = str(exc)
     return resultado
 
 

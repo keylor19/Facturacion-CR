@@ -1,3 +1,4 @@
+// Bitácora (solo administradores): quién hizo qué y cuándo, con filtros.
 import { api } from '../api.js';
 import { h, vaciar, fecha, tabla, aviso, toast } from '../dom.js';
 import { contexto } from '../app.js';

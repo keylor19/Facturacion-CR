@@ -1,8 +1,10 @@
+// Documentos emitidos: lista con filtros y detalle de cada comprobante (PDF, XML, reenviar, anular con nota de
+// crédito por motivo normal o error material, recibos de pago de ventas a crédito).
 import { api, abrir, descargar } from '../api.js';
 import {
   h, vaciar, dinero, fecha, badge, tabla, modal, conBoton, toast, campo, opciones, TIPOS, ESTADOS,
 } from '../dom.js';
-import { MEDIOS_PAGO, CONDICIONES_VENTA, SITUACIONES } from '../catalogos.js';
+import { MEDIOS_PAGO, CONDICIONES_VENTA, SITUACIONES, CODIGOS_REFERENCIA } from '../catalogos.js';
 
 const POR_PAGINA = 50;
 const ANULABLES = ['01', '02', '04', '09'];
@@ -86,7 +88,7 @@ export async function vistaDetalleComprobante(cont, id) {
   if (c.estado === 'ACEPTADO') {
     acciones.push(h('button', { type: 'button', onclick: () => dialogoCorreo(id) }, 'Enviar por correo'));
     if (ANULABLES.includes(c.tipo_documento)) {
-      acciones.push(h('button', { type: 'button', class: 'peligro', onclick: () => dialogoAnular(id) }, 'Anular con nota de crédito'));
+      acciones.push(h('button', { type: 'button', class: 'peligro', onclick: () => dialogoAnular(id, c) }, 'Anular con nota de crédito'));
     }
   }
 
@@ -129,7 +131,12 @@ export async function vistaDetalleComprobante(cont, id) {
           h('dt', {}, 'Situación'), h('dd', {}, SITUACIONES[c.situacion] || c.situacion),
           h('dt', {}, 'Referencia externa'), h('dd', {}, c.referencia_externa || '—'),
           h('dt', {}, 'Correo enviado'), h('dd', {}, c.correo_enviado ? 'Sí' : 'No'),
-          c.factura_origen_id ? [h('dt', {}, 'Documento de origen'), h('dd', {}, h('a', { href: `#/comprobantes/${c.factura_origen_id}` }, 'Ver'))] : null)),
+          c.factura_origen_id ? [h('dt', {}, 'Documento de origen'), h('dd', {}, h('a', { href: `#/comprobantes/${c.factura_origen_id}` }, 'Ver'))] : null,
+          c.codigo_referencia ? [h('dt', {}, 'Motivo de la referencia'),
+            h('dd', { title: `Código ${c.codigo_referencia}` }, CODIGOS_REFERENCIA[c.codigo_referencia] || (c.codigo_referencia === '17' ? 'Pago a comprobante' : c.codigo_referencia))] : null,
+          c.periodo_fiscal && c.periodo_fiscal.slice(0, 7) !== String(c.fecha_emision).slice(0, 7)
+            ? [h('dt', {}, 'Mes contable'), h('dd', {}, h('strong', {}, new Date(`${c.periodo_fiscal}T12:00:00`).toLocaleDateString('es-CR', { month: 'long', year: 'numeric' })),
+              ' (error material: cuenta en el mes de la factura original)')] : null)),
       h('section', { class: 'tarjeta' }, h('h2', {}, 'Totales'),
         h('table', { class: 'totales' }, h('tbody', {},
           filaTotal('Total venta', c.total_venta, c.moneda),
@@ -155,18 +162,34 @@ function filaTotal(nombre, valor, moneda) {
   return h('tr', {}, h('td', {}, nombre), h('td', { class: 'num' }, dinero(valor, moneda)));
 }
 
-function dialogoAnular(id) {
+// Desde el 01-11-2026 Hacienda distingue la anulación normal (01) de la anulación por error
+// material (13): con el 13 el ajuste va al mes de la factura original.
+const MOTIVOS_ANULACION = [
+  ['01', 'Anulación normal', 'Devolución, venta cancelada o acuerdo con el cliente. El ajuste cuenta en el mes de la nota.'],
+  ['13', 'Error material', 'Cliente equivocado, factura duplicada o hecha mal desde el inicio. El ajuste cuenta en el mes '
+    + 'de la factura original: si ese mes ya se declaró, hay que rectificar el IVA. La factura correcta que la reemplace '
+    + 'lleva el código 15.'],
+];
+
+function dialogoAnular(id, c) {
   const razon = h('textarea', { rows: '3', maxlength: '180', required: true });
+  const opcionesMotivo = MOTIVOS_ANULACION.map(([codigo, titulo, ayuda], i) => {
+    const radio = h('input', { type: 'radio', name: 'motivo-anulacion', value: codigo, checked: i === 0 });
+    return h('label', { class: 'check opcion-motivo' }, radio, h('span', {}, h('strong', {}, titulo), h('br'), h('span', { class: 'suave' }, ayuda)));
+  });
+  const mesOriginal = c ? new Date(c.fecha_emision).toLocaleDateString('es-CR', { month: 'long', year: 'numeric' }) : '';
   const boton = h('button', { type: 'button', class: 'primario peligro', onclick: () => conBoton(boton, async () => {
     if (!razon.value.trim()) { toast('Indique la razón', 'error'); return; }
-    const r = await api(`/facturas/${id}/anular`, { method: 'POST', body: { razon: razon.value.trim() } });
+    const codigo = opcionesMotivo.map((l) => l.querySelector('input')).find((r) => r.checked).value;
+    const r = await api(`/facturas/${id}/anular`, { method: 'POST', body: { razon: razon.value.trim(), codigo } });
     m.cerrar();
-    toast('Nota de crédito generada', 'ok');
+    toast(codigo === '13' ? `Nota de crédito generada. Afecta el IVA de ${mesOriginal}.` : 'Nota de crédito generada', 'ok');
     location.hash = `#/comprobantes/${r.factura_id}`;
   }) }, 'Emitir nota de crédito');
   const m = modal('Anular comprobante', [
-    h('p', {}, 'Se emitirá una nota de crédito por el total del comprobante, referenciándolo con código 01 (anula documento).'),
-    campo('Razón de la anulación', razon),
+    h('p', {}, 'Se emitirá una nota de crédito por el total del comprobante. ¿Por qué se anula?'),
+    opcionesMotivo,
+    campo('Razón de la anulación (aparece en la nota)', razon),
   ], { acciones: [boton] });
 }
 

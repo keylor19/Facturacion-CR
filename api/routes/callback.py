@@ -28,7 +28,7 @@ from workers.tasks import consultar_documento
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/hacienda", tags=["hacienda-callback"], include_in_schema=False)
 
-RE_CLAVE = re.compile(r"^(\d{50})(?:-(\d{20}))?$")
+RE_CLAVE = re.compile(r"^([A-Za-z0-9]{50})(?:-(\d{20}))?$")
 
 
 @router.post("/callback/{token}")

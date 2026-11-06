@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     # Verificar que cada código CABYS exista en el catálogo de Hacienda antes de firmar
     # (consulta cacheada 24 h; si el servicio de Hacienda no responde, no se bloquea la emisión)
     VALIDAR_CABYS: bool = True
+    # Código de referencia con que el recibo electrónico de pago cita la factura.
+    # Anexos y Estructuras 4.4 (desde el 01-11-2026): 17 "Pago a comprobante electrónico".
+    # Antes se usaba 04; se deja configurable por si Hacienda todavía no acepta el 17.
+    CODIGO_REFERENCIA_RECIBO_PAGO: str = "17"
 
     # --- Callback público (Hacienda debe poder alcanzar esta URL por HTTPS) ---
     CALLBACK_BASE_URL: str = "https://tu-dominio.com"

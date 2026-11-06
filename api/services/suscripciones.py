@@ -16,7 +16,9 @@ from api.models.database import Emisor, Suscripcion, utcnow
 from api.services.fechas import zona_cr
 from config.settings import get_settings
 
-SERVICIOS = {"api": "Conexión por API", "facturacion_web": "Facturación en línea"}
+SERVICIOS = {"api": "Conexión por API", "facturacion_web": "Panel web"}
+# Regalía: período sin costo que no vence (100 años)
+MESES_REGALIA = 1200
 # Columna de Emisor con la casilla de cada servicio
 CASILLA = {"api": "acceso_api", "facturacion_web": "facturacion_web"}
 
@@ -60,8 +62,10 @@ def estado(db: Session, emisor: Emisor, servicio: str) -> dict:
         situacion = "EN_GRACIA"
     else:
         situacion = "VENCIDO"
+    regalia = bool(hasta and hasta - ahora > timedelta(days=365 * 50))
     return {
-        "servicio": servicio, "nombre": SERVICIOS[servicio], "habilitado": habilitado, "vence": hasta,
+        "servicio": servicio, "nombre": SERVICIOS[servicio], "habilitado": habilitado,
+        "vence": None if regalia else hasta, "regalia": regalia,
         "estado": situacion, "activo": situacion in ("ACTIVO", "POR_VENCER", "EN_GRACIA"),
     }
 
@@ -82,15 +86,25 @@ def motivo_inactivo(db: Session, emisor: Emisor, servicio: str) -> str:
         return f"El servicio de {nombre} venció el {fecha}; contacte a su proveedor para renovarlo"
     if e["estado"] == "SIN_CONTRATAR":
         return f"La empresa no tiene contratado el servicio de {nombre}; contacte a su proveedor"
-    return f"La {nombre} no está activa para esta empresa; contacte a su proveedor"
+    return f"El servicio de {nombre} no está activo para esta empresa; contacte a su proveedor"
 
 
 def vender(db: Session, emisor: Emisor, servicio: str, meses: int, precio: Decimal, moneda: str,
-           referencia_pago: str | None, notas: str | None, creado_por: str | None) -> Suscripcion:
-    """Registra el pago de N meses. Si aún está vigente, el nuevo período empieza al terminar el actual."""
+           referencia_pago: str | None, notas: str | None, creado_por: str | None,
+           regalia: bool = False) -> Suscripcion:
+    """
+    Registra el pago de N meses. Si hay meses pagados vigentes, el nuevo período
+    empieza al terminar esos. Una regalía empieza ya, no cuesta y no vence; los
+    meses pagados no se encadenan detrás de una regalía (si no, empezarían dentro
+    de 100 años y al anular la regalía la empresa quedaría sin servicio).
+    """
     ahora = utcnow()
-    actual = vence(db, emisor.id, servicio)
+    actual = db.scalar(select(func.max(Suscripcion.hasta)).where(
+        Suscripcion.emisor_id == emisor.id, Suscripcion.servicio == servicio,
+        Suscripcion.anulada.is_(False), Suscripcion.meses < MESES_REGALIA))
     desde = actual if actual and actual > ahora else ahora
+    if regalia:
+        desde, meses, precio, notas = ahora, MESES_REGALIA, Decimal("0"), notas or "Regalía"
     sus = Suscripcion(
         emisor_id=emisor.id, servicio=servicio, desde=desde, hasta=sumar_meses(desde, meses), meses=meses,
         precio=precio, moneda=moneda, referencia_pago=referencia_pago, notas=notas, creado_por=creado_por,
@@ -114,5 +128,5 @@ def a_dict(s: Suscripcion) -> dict:
         "id": str(s.id), "servicio": s.servicio, "nombre": SERVICIOS.get(s.servicio, s.servicio),
         "desde": s.desde, "hasta": s.hasta, "meses": s.meses, "precio": str(s.precio), "moneda": s.moneda,
         "referencia_pago": s.referencia_pago, "notas": s.notas, "estado": situacion,
-        "creado_por": s.creado_por, "fecha": s.created_at,
+        "creado_por": s.creado_por, "fecha": s.created_at, "regalia": s.meses >= MESES_REGALIA,
     }

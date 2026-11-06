@@ -102,7 +102,9 @@ paquete de documentos **y con la mensualidad del servicio cobrada** (ver el
 > 1. **Productos:** registre lo que vende (código CABYS, precio e IVA). Si
 >    quiere llevar inventario, marque *Controlar inventario*.
 > 2. **Clientes:** registre sus clientes frecuentes (o guárdelos al facturar).
-> 3. **Nuevo comprobante:** *Elegir cliente*, *+ Del catálogo*, y
+> 3. **Facturar → Factura electrónica** (o el botón *Nueva factura*):
+>    escriba la cédula del cliente o use *Elegir de mis clientes*, luego
+>    *+ Agregar de mis productos*, y
 >    **Firmar y enviar a Hacienda**. El PDF y el XML le llegan al cliente por
 >    correo cuando Hacienda acepta la factura.
 >

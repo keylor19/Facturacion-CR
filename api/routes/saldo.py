@@ -11,8 +11,9 @@ from api.models.database import Consumo, Emisor, Factura, Paquete, Plan, Suscrip
 from api.models.schemas import (
     AcreditarRequest, PlanActualizar, PlanCrear, PlanResponse, SuscripcionRequest, TIPOS_COMPROBANTE,
 )
+from api.routes.facturas import _encolar_envio
 from api.security import Principal, emisor_actual, require_admin
-from api.services import auditoria, saldo, suscripciones
+from api.services import administracion, auditoria, cache, saldo, suscripciones
 from api.services.fechas import zona_cr
 from api.services.reportes import rango_mes
 
@@ -139,7 +140,17 @@ def acreditar_paquete(emisor_id: UUID, payload: AcreditarRequest, request: Reque
     auditoria.registrar(db, "paquete.vender", principal=principal, request=request, emisor_id=emisor.id,
                         detalle=f"{payload.documentos or (plan.documentos if plan else '')} documentos"
                         + (f", pago {payload.referencia_pago}" if payload.referencia_pago else ""))
-    return {"paquete": saldo.paquete_a_dict(paquete), "disponible": saldo.disponible(db, emisor.id)}
+    return {"paquete": saldo.paquete_a_dict(paquete), "disponible": saldo.disponible(db, emisor.id),
+            "comprobante": _comprobante_venta(db, paquete, emisor, payload.comprobante, payload.medio_pago)}
+
+
+def _comprobante_venta(db: Session, venta, comprador: Emisor, tipo, medio_pago) -> dict | None:
+    """Factura o tiquete al cliente por la venta; si falla, la venta queda registrada y se informa el motivo."""
+    cache.borrar(*administracion.CLAVES_CACHE_ADMIN)   # el tablero debe mostrar la venta de inmediato
+    factura, error = administracion.emitir_comprobante(db, venta, comprador, tipo, medio_pago)
+    if factura:
+        _encolar_envio(str(factura.id))
+    return administracion.comprobante_a_dict(db, venta) if (factura or error) else None
 
 
 @admin.post("/paquetes/{paquete_id}/anular")
@@ -151,9 +162,10 @@ def anular_paquete(paquete_id: UUID, request: Request, principal: Principal = De
         raise HTTPException(status_code=404, detail="Paquete no encontrado")
     paquete.anulado = True
     db.commit()
+    cache.borrar(*administracion.CLAVES_CACHE_ADMIN)
     auditoria.registrar(db, "paquete.anular", principal=principal, request=request, emisor_id=paquete.emisor_id,
                         detalle=f"paquete {paquete.id}")
-    return saldo.paquete_a_dict(paquete)
+    return {**saldo.paquete_a_dict(paquete), "aviso_comprobante": administracion.comprobante_por_anular(db, paquete)}
 
 
 # --- Administración: alquiler de servicios (mensualidades) ----------------------------
@@ -177,12 +189,13 @@ def vender_suscripcion(emisor_id: UUID, payload: SuscripcionRequest, request: Re
     emisor = _emisor(db, emisor_id)
     sus = suscripciones.vender(
         db, emisor, payload.servicio, payload.meses, payload.precio, payload.moneda,
-        payload.referencia_pago, payload.notas, auditoria.nombre_actor(db, principal),
+        payload.referencia_pago, payload.notas, auditoria.nombre_actor(db, principal), regalia=payload.regalia,
     )
     auditoria.registrar(db, "suscripcion.vender", principal=principal, request=request, emisor_id=emisor.id,
                         detalle=f"{suscripciones.SERVICIOS[sus.servicio]}: {sus.meses} mes(es), {sus.precio} {sus.moneda}"
                         + (f", pago {sus.referencia_pago}" if sus.referencia_pago else ""))
-    return {"suscripcion": suscripciones.a_dict(sus), "servicio": suscripciones.estado(db, emisor, sus.servicio)}
+    return {"suscripcion": suscripciones.a_dict(sus), "servicio": suscripciones.estado(db, emisor, sus.servicio),
+            "comprobante": _comprobante_venta(db, sus, emisor, payload.comprobante, payload.medio_pago)}
 
 
 @admin.post("/suscripciones/{suscripcion_id}/anular")
@@ -194,9 +207,10 @@ def anular_suscripcion(suscripcion_id: UUID, request: Request, principal: Princi
         raise HTTPException(status_code=404, detail="Suscripción no encontrada")
     sus.anulada = True
     db.commit()
+    cache.borrar(*administracion.CLAVES_CACHE_ADMIN)
     auditoria.registrar(db, "suscripcion.anular", principal=principal, request=request, emisor_id=sus.emisor_id,
                         detalle=f"{suscripciones.SERVICIOS.get(sus.servicio, sus.servicio)} {sus.id}")
-    return suscripciones.a_dict(sus)
+    return {**suscripciones.a_dict(sus), "aviso_comprobante": administracion.comprobante_por_anular(db, sus)}
 
 
 @admin.get("/admin/ventas")

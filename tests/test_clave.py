@@ -35,7 +35,7 @@ def test_tipos_compra_y_exportacion():
 
 
 @pytest.mark.parametrize("kwargs", [
-    dict(numero_identificacion_emisor="31011234AB"),
+    dict(numero_identificacion_emisor="3101-12345"),     # desde 2026 se aceptan letras, no otros signos
     dict(sucursal=1000),
     dict(terminal=0),
     dict(tipo_documento="99"),

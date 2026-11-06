@@ -34,9 +34,12 @@ SITUACION_SIN_INTERNET = "3"
 
 
 def _normalizar_cedula(numero_identificacion: str) -> str:
-    """La cédula siempre va en 12 dígitos, rellenada con ceros a la izquierda."""
-    cedula = numero_identificacion.strip()
-    if not cedula.isdigit() or len(cedula) > 12:
+    """
+    La cédula va en 12 posiciones, rellenada con ceros a la izquierda. Desde 2026
+    la cédula jurídica puede ser alfanumérica y la clave admite letras.
+    """
+    cedula = numero_identificacion.strip().upper()
+    if not cedula.isalnum() or len(cedula) > 12:
         raise ValueError(f"Identificación del emisor inválida: {numero_identificacion!r}")
     return cedula.zfill(12)
 

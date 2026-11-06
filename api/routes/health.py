@@ -1,3 +1,8 @@
+"""
+Salud del servicio: /api/v1/health (público, para el balanceador y el
+monitoreo) y un detalle para administradores con el estado de la base de
+datos, Redis, el correo (SMTP) y los certificados vencidos o por vencer.
+"""
 import logging
 from datetime import timedelta
 

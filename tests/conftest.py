@@ -133,7 +133,7 @@ def crear_emisor(db, numero="3101123456", nombre="Pruebas S.A.", con_certificado
     emisor = Emisor(
         tipo_identificacion="02", numero_identificacion=numero, nombre=nombre, codigo_actividad="620100",
         correo="facturas@example.com", provincia="1", canton="01", distrito="01",
-        otras_senas="Frente al parque", ambiente="stag",
+        otras_senas="Frente al parque", ambiente="stag", facturacion_web=True,   # con panel web contratado
     )
     if con_certificado:
         emisores.guardar_certificado(emisor, crear_p12(numero), CERT_PASSWORD)

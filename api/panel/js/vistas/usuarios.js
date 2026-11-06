@@ -1,3 +1,4 @@
+// Usuarios del panel: alta, empresas a las que tiene acceso, rol y bloqueo.
 import { api } from '../api.js';
 import { h, vaciar, fecha, tabla, modal, conBoton, toast, campo, aviso } from '../dom.js';
 import { contexto } from '../app.js';

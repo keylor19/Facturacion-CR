@@ -1,19 +1,34 @@
 {
-  "name": "Facturación CR — autollenado y emisión",
+  "name": "Facturación CR — conexión completa con el API",
   "nodes": [
     {
       "parameters": {
-        "content": "## 1. Autollenado por cédula\nGET `/webhook/facturacion/cliente?cedula=3101005744`\n\nDevuelve nombre, tipo, si está inscrito, actividades y el correo si es cliente guardado.\n\n**Antes de usar:** reemplace `SU-DOMINIO` y elija la credencial *Header Auth* (X-API-Key) en cada nodo HTTP.",
-        "height": 220,
-        "width": 520
+        "content": "# Facturación CR — conexión con n8n\nFlujo listo para automatizar la facturación electrónica de Costa Rica con este API.\n\n**Antes de importar:** abra este archivo .json con un editor de texto y reemplace `SU-DOMINIO` por el dominio del servicio (ej. `facturas.miempresa.com`). Es un solo reemplazo para todo el flujo.\n\n**Después de importar:**\n1. Credencial *Header Auth* **Facturación CR (API key)** → Name `X-API-Key`, Value = la API key de la empresa.\n2. Credencial *Header Auth* **Facturación CR (clave de mis webhooks)** → Name `X-Clave`, Value = una clave larga que solo conozca su sistema. Protege las URLs de este flujo.\n3. Nodo *Verificar firma*: pegue el secreto del webhook del servicio y active `NODE_FUNCTION_ALLOW_BUILTIN=crypto` en n8n.\n4. Active el flujo. Guía completa: docs/n8n.md",
+        "height": 400,
+        "width": 700
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000001",
-      "name": "Nota 1",
+      "id": "f4c7a000-0000-4000-8000-000000000001",
+      "name": "Léame",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -240,
-        -260
+        -300,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 1. Autollenar el cliente\nGET `/webhook/facturacion/cliente?cedula=3101005744`\n\nDatos de Hacienda (inscrito, actividades) + correo si ya es cliente de la empresa.",
+        "height": 160,
+        "width": 560
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000002",
+      "name": "1. Cliente por cédula",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -300,
+        120
       ]
     },
     {
@@ -21,29 +36,36 @@
         "httpMethod": "GET",
         "path": "facturacion/cliente",
         "responseMode": "responseNode",
+        "authentication": "headerAuth",
         "options": {}
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000002",
+      "id": "f4c7a000-0000-4000-8000-000000000004",
       "name": "Webhook cliente",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
         0,
-        0
+        340
       ],
-      "webhookId": "a1b2c3d4-0000-4000-8000-000000000003"
+      "webhookId": "f4c7a000-0000-4000-8000-000000000003",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-webhooks",
+          "name": "Facturación CR (clave de mis webhooks)"
+        }
+      }
     },
     {
       "parameters": {
         "jsCode": "const cedula = String($json.query.cedula || '').replace(/\\D/g, '');\nreturn [{ json: { cedula, valida: cedula.length >= 9 && cedula.length <= 12 } }];"
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000004",
+      "id": "f4c7a000-0000-4000-8000-000000000005",
       "name": "Validar cédula",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        220,
-        0
+        240,
+        340
       ]
     },
     {
@@ -56,7 +78,7 @@
           },
           "conditions": [
             {
-              "id": "a1b2c3d4-0000-4000-8000-000000000005",
+              "id": "f4c7a000-0000-4000-8000-000000000006",
               "leftValue": "={{ $json.valida }}",
               "rightValue": "",
               "operator": {
@@ -70,13 +92,13 @@
         },
         "options": {}
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000006",
+      "id": "f4c7a000-0000-4000-8000-000000000007",
       "name": "¿Cédula completa?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        440,
-        0
+        480,
+        340
       ]
     },
     {
@@ -94,14 +116,20 @@
           }
         }
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000007",
+      "id": "f4c7a000-0000-4000-8000-000000000008",
       "name": "Hacienda: contribuyente",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        660,
-        -100
-      ]
+        720,
+        240
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-api",
+          "name": "Facturación CR (API key)"
+        }
+      }
     },
     {
       "parameters": {
@@ -127,84 +155,94 @@
           }
         }
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000008",
+      "id": "f4c7a000-0000-4000-8000-000000000009",
       "name": "Mis clientes",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        880,
-        -100
-      ]
+        960,
+        240
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-api",
+          "name": "Facturación CR (API key)"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const h = $('Hacienda: contribuyente').first().json;\nconst c = $('Mis clientes').first().json;\nconst cedula = $('Validar cédula').first().json.cedula;\nconst hacienda = h.statusCode === 200 ? h.body : null;\nconst guardado = c.statusCode === 200 && Array.isArray(c.body)\n  ? c.body.find((x) => x.numero_identificacion === cedula) : null;\nconst activas = (hacienda?.actividades || []).filter((a) => a.estado === 'A' || !a.estado);\nconst principal = activas.find((a) => a.tipo === 'P') || activas[0];\nconst situacion = hacienda?.situacion || {};\nreturn [{ json: {\n  encontrado: Boolean(hacienda || guardado),\n  inscrito: (situacion.estado || '').toLowerCase() === 'inscrito',\n  moroso: situacion.moroso === 'SI',\n  omiso: situacion.omiso === 'SI',\n  receptor: {\n    nombre: hacienda?.nombre || guardado?.nombre || null,\n    tipo_identificacion: hacienda?.tipoIdentificacion || guardado?.tipo_identificacion || null,\n    numero_identificacion: cedula,\n    correo: guardado?.correo || null,\n  },\n  codigo_actividad: guardado?.codigo_actividad || (principal ? String(principal.codigo).padStart(6, '0') : null),\n  actividades: activas.map((a) => ({ codigo: String(a.codigo).padStart(6, '0'), descripcion: a.descripcion, principal: a.tipo === 'P' })),\n  cliente_id: guardado?.id || null,\n  datos_guardados_por_falla_de_hacienda: Boolean(hacienda?._respaldo_local),\n  mensaje: h.statusCode === 404 ? 'No está inscrito en Hacienda'\n    : h.statusCode >= 400 ? (h.body?.detail || 'No se pudo consultar Hacienda') : null,\n} }];"
+        "jsCode": "const h = $('Hacienda: contribuyente').first().json;\nconst c = $('Mis clientes').first().json;\nconst cedula = $('Validar cédula').first().json.cedula;\nconst hacienda = h.statusCode === 200 ? h.body : null;\nconst guardado = c.statusCode === 200 && Array.isArray(c.body) ? c.body.find((x) => x.numero_identificacion === cedula) : null;\nconst activas = (hacienda?.actividades || []).filter((a) => a.estado === 'A' || !a.estado);\nconst principal = activas.find((a) => a.tipo === 'P') || activas[0];\nconst situacion = hacienda?.situacion || {};\nreturn [{ json: {\n  encontrado: Boolean(hacienda || guardado),\n  inscrito: (situacion.estado || '').toLowerCase() === 'inscrito',\n  moroso: situacion.moroso === 'SI', omiso: situacion.omiso === 'SI',\n  receptor: {\n    nombre: hacienda?.nombre || guardado?.nombre || null,\n    tipo_identificacion: hacienda?.tipoIdentificacion || guardado?.tipo_identificacion || null,\n    numero_identificacion: cedula, correo: guardado?.correo || null,\n  },\n  codigo_actividad: guardado?.codigo_actividad || (principal ? String(principal.codigo).padStart(6, '0') : null),\n  actividades: activas.map((a) => ({ codigo: String(a.codigo).padStart(6, '0'), descripcion: a.descripcion, principal: a.tipo === 'P' })),\n  cliente_id: guardado?.id || null,\n  datos_guardados_por_falla_de_hacienda: Boolean(hacienda?._respaldo_local),\n  mensaje: h.statusCode === 404 ? 'No está inscrito en Hacienda' : h.statusCode >= 400 ? (h.body?.detail || 'No se pudo consultar Hacienda') : null,\n} }];"
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000009",
+      "id": "f4c7a000-0000-4000-8000-000000000010",
       "name": "Armar datos del cliente",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1100,
-        -100
+        1200,
+        240
       ]
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
-        "options": {}
+        "options": {
+          "responseCode": "={{ $json.http_status || 200 }}"
+        }
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000010",
+      "id": "f4c7a000-0000-4000-8000-000000000011",
       "name": "Responder cliente",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1320,
-        -100
+        1440,
+        240
       ]
     },
     {
       "parameters": {
-        "jsCode": "return [{ json: { encontrado: false, mensaje: 'La cédula debe tener entre 9 y 12 dígitos' } }];"
+        "jsCode": "return [{ json: { encontrado: false, mensaje: 'La cédula debe tener entre 9 y 12 dígitos', http_status: 422 } }];"
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000011",
+      "id": "f4c7a000-0000-4000-8000-000000000012",
       "name": "Cédula incompleta",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        660,
-        120
+        720,
+        460
       ]
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
-        "options": {}
+        "options": {
+          "responseCode": "={{ $json.http_status || 200 }}"
+        }
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000012",
+      "id": "f4c7a000-0000-4000-8000-000000000013",
       "name": "Responder cédula incompleta",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        880,
-        120
+        960,
+        460
       ]
     },
     {
       "parameters": {
-        "content": "## 2. Buscar producto o servicio\nGET `/webhook/facturacion/producto?q=martillo`\n\nPrimero los productos de la empresa (precio, IVA, existencia); además sugerencias del catálogo CABYS oficial.",
-        "height": 180,
-        "width": 520
+        "content": "## 2. Buscar producto o servicio\nGET `/webhook/facturacion/producto?q=martillo`\n\nProductos de la empresa (precio, IVA, existencia, descuentos no incluidos) y sugerencias del catálogo CABYS.",
+        "height": 160,
+        "width": 560
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000013",
-      "name": "Nota 13",
+      "id": "f4c7a000-0000-4000-8000-000000000014",
+      "name": "2. Buscar producto",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -240,
-        300
+        -300,
+        640
       ]
     },
     {
@@ -212,17 +250,24 @@
         "httpMethod": "GET",
         "path": "facturacion/producto",
         "responseMode": "responseNode",
+        "authentication": "headerAuth",
         "options": {}
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000014",
+      "id": "f4c7a000-0000-4000-8000-000000000016",
       "name": "Webhook producto",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
         0,
-        520
+        860
       ],
-      "webhookId": "a1b2c3d4-0000-4000-8000-000000000015"
+      "webhookId": "f4c7a000-0000-4000-8000-000000000015",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-webhooks",
+          "name": "Facturación CR (clave de mis webhooks)"
+        }
+      }
     },
     {
       "parameters": {
@@ -236,6 +281,10 @@
             {
               "name": "q",
               "value": "={{ $json.query.q }}"
+            },
+            {
+              "name": "limite",
+              "value": "10"
             }
           ]
         },
@@ -248,14 +297,20 @@
           }
         }
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000016",
+      "id": "f4c7a000-0000-4000-8000-000000000017",
       "name": "Mis productos",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        220,
-        520
-      ]
+        240,
+        860
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-api",
+          "name": "Facturación CR (API key)"
+        }
+      }
     },
     {
       "parameters": {
@@ -285,56 +340,64 @@
           }
         }
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000017",
+      "id": "f4c7a000-0000-4000-8000-000000000018",
       "name": "CABYS",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        440,
-        520
-      ]
+        480,
+        860
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-api",
+          "name": "Facturación CR (API key)"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const q = $('Webhook producto').first().json.query.q || '';\nconst p = $('Mis productos').first().json;\nconst c = $('CABYS').first().json;\nconst TARIFA = { 13: '08', 8: '07', 4: '04', 2: '03', 1: '02', 0.5: '09' };\nconst productos = (p.statusCode === 200 && Array.isArray(p.body) ? p.body : []).slice(0, 10).map((x) => ({\n  origen: 'mis_productos', producto_id: x.id, codigo: x.codigo, descripcion: x.descripcion,\n  codigo_cabys: x.codigo_cabys, unidad_medida: x.unidad_medida, precio_unitario: x.precio_unitario,\n  codigo_tarifa_iva: x.codigo_tarifa_iva, existencia: x.controla_inventario ? x.existencia : null,\n}));\nconst lista = c.statusCode === 200 ? (Array.isArray(c.body) ? c.body : c.body.cabys || []) : [];\nconst cabys = lista.slice(0, 10).map((x) => ({\n  origen: 'cabys', codigo_cabys: x.codigo, descripcion: x.descripcion, impuesto: x.impuesto,\n  codigo_tarifa_iva: TARIFA[Number(x.impuesto)] || null,\n}));\nreturn [{ json: { q, productos, cabys } }];"
+        "jsCode": "const q = $('Webhook producto').first().json.query.q || '';\nconst p = $('Mis productos').first().json;\nconst c = $('CABYS').first().json;\nconst TARIFA = { 13: '08', 8: '07', 4: '04', 2: '03', 1: '02', 0.5: '09' };\nconst productos = (p.statusCode === 200 && Array.isArray(p.body) ? p.body : []).map((x) => ({\n  origen: 'mis_productos', producto_id: x.id, codigo: x.codigo, descripcion: x.descripcion, categoria: x.categoria,\n  codigo_cabys: x.codigo_cabys, unidad_medida: x.unidad_medida, precio_unitario: x.precio_unitario,\n  codigo_tarifa_iva: x.codigo_tarifa_iva, es_combo: x.es_combo,\n  existencia: x.es_combo ? x.combo_disponible : x.controla_inventario ? x.existencia : null,\n}));\nconst lista = c.statusCode === 200 ? (Array.isArray(c.body) ? c.body : c.body.cabys || []) : [];\nconst cabys = lista.slice(0, 10).map((x) => ({\n  origen: 'cabys', codigo_cabys: x.codigo, descripcion: x.descripcion, impuesto: x.impuesto,\n  codigo_tarifa_iva: TARIFA[Number(x.impuesto)] || null,\n}));\nreturn [{ json: { q, productos, cabys } }];"
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000018",
+      "id": "f4c7a000-0000-4000-8000-000000000019",
       "name": "Armar resultados",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        660,
-        520
+        720,
+        860
       ]
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
-        "options": {}
+        "options": {
+          "responseCode": "={{ $json.http_status || 200 }}"
+        }
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000019",
+      "id": "f4c7a000-0000-4000-8000-000000000020",
       "name": "Responder productos",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        880,
-        520
+        960,
+        860
       ]
     },
     {
       "parameters": {
-        "content": "## 3. Emitir factura\nPOST `/webhook/facturacion/emitir` con el JSON de la factura (ver guía).\n\nEnvíe siempre `referencia_externa` única: si se reintenta, no se duplica la factura.",
+        "content": "## 3. Emitir factura, tiquete o nota\nPOST `/webhook/facturacion/emitir` con el JSON del comprobante (igual que `POST /facturas`).\n\n**Siempre** envíe `referencia_externa` única (ID del pedido o de la conversación): si n8n reintenta, no se duplica ni se cobra dos veces.",
         "height": 180,
-        "width": 520
+        "width": 560
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000020",
-      "name": "Nota 20",
+      "id": "f4c7a000-0000-4000-8000-000000000021",
+      "name": "3. Emitir",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -240,
-        700
+        -300,
+        1040
       ]
     },
     {
@@ -342,17 +405,24 @@
         "httpMethod": "POST",
         "path": "facturacion/emitir",
         "responseMode": "responseNode",
+        "authentication": "headerAuth",
         "options": {}
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000021",
+      "id": "f4c7a000-0000-4000-8000-000000000023",
       "name": "Webhook emitir",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
         0,
-        920
+        1260
       ],
-      "webhookId": "a1b2c3d4-0000-4000-8000-000000000022"
+      "webhookId": "f4c7a000-0000-4000-8000-000000000022",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-webhooks",
+          "name": "Facturación CR (clave de mis webhooks)"
+        }
+      }
     },
     {
       "parameters": {
@@ -372,88 +442,333 @@
           }
         }
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000023",
+      "id": "f4c7a000-0000-4000-8000-000000000024",
       "name": "Emitir en el servicio",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        220,
-        920
-      ]
+        240,
+        1260
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-api",
+          "name": "Facturación CR (API key)"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const r = $json;\nconst ok = r.statusCode === 200 || r.statusCode === 202;\nconst detalle = r.body?.detail;\nreturn [{ json: {\n  ok,\n  status: r.statusCode,\n  factura_id: ok ? r.body.factura_id : null,\n  clave: ok ? r.body.clave : null,\n  estado: ok ? r.body.estado : null,\n  documentos_disponibles: r.headers?.['x-documentos-disponibles'] ?? null,\n  error: ok ? null : (typeof detalle === 'string' ? detalle : JSON.stringify(detalle)),\n} }];"
+        "jsCode": "const r = $json;\nconst ok = r.statusCode >= 200 && r.statusCode < 300;\nconst d = r.body?.detail;\nconst error = ok ? null : (typeof d === 'string' ? d : d ? JSON.stringify(d) : `HTTP ${r.statusCode}`);\nconst salida = (b) => ({ factura_id: b?.factura_id ?? null, clave: b?.clave ?? null, estado: b?.estado ?? null, http_status: r.statusCode });\nreturn [{ json: { ok, status: r.statusCode, error, ...salida(ok ? r.body : null), documentos_disponibles: r.headers?.['x-documentos-disponibles'] ?? null } }];"
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000024",
+      "id": "f4c7a000-0000-4000-8000-000000000025",
       "name": "Resultado de la emisión",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        440,
-        920
+        480,
+        1260
       ]
     },
     {
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
-        "options": {}
+        "options": {
+          "responseCode": "={{ $json.http_status || 200 }}"
+        }
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000025",
+      "id": "f4c7a000-0000-4000-8000-000000000026",
       "name": "Responder emisión",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        660,
-        920
+        720,
+        1260
       ]
     },
     {
       "parameters": {
-        "content": "## 4. Avisos del servicio\nConfigure esta URL (de producción) en la ficha de la empresa → **Webhook**.\nEventos: comprobante.aceptado / rechazado, saldo.bajo, etc.\n\nRequiere `NODE_FUNCTION_ALLOW_BUILTIN=crypto` en n8n y pegar el secreto en el nodo *Verificar firma*.",
-        "height": 200,
-        "width": 520
+        "content": "## 4. Consultar una factura y su PDF\nGET `/webhook/facturacion/factura?id=…` o `?referencia=PEDIDO-123`\nGET `/webhook/facturacion/pdf?id=…` → devuelve el PDF (para adjuntarlo en WhatsApp o correo).",
+        "height": 160,
+        "width": 560
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000026",
-      "name": "Nota 26",
+      "id": "f4c7a000-0000-4000-8000-000000000027",
+      "name": "4. Consultar",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        -240,
-        1080
+        -300,
+        1420
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "facturacion/factura",
+        "responseMode": "responseNode",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000029",
+      "name": "Webhook consultar",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        1640
+      ],
+      "webhookId": "f4c7a000-0000-4000-8000-000000000028",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-webhooks",
+          "name": "Facturación CR (clave de mis webhooks)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.query.id ? 'https://SU-DOMINIO/api/v1/facturas/' + encodeURIComponent($json.query.id) : 'https://SU-DOMINIO/api/v1/facturas?referencia_externa=' + encodeURIComponent($json.query.referencia || '') }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000030",
+      "name": "Buscar factura",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        1640
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-api",
+          "name": "Facturación CR (API key)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const q = $('Webhook consultar').first().json.query || {};\nif (!q.id && !q.referencia) return [{ json: { ok: false, http_status: 422, error: 'Indique ?id= o ?referencia=' } }];\nconst r = $json;\nlet f = r.body;\nif (Array.isArray(f)) f = f[0] || null;\nconst ok = r.statusCode === 200 && Boolean(f);\nif (!ok) return [{ json: { ok: false, http_status: r.statusCode === 200 ? 404 : r.statusCode, error: r.body?.detail || 'No se encontró el comprobante' } }];\nreturn [{ json: {\n  ok: true, factura_id: f.factura_id, referencia_externa: f.referencia_externa, clave: f.clave,\n  consecutivo: f.numero_consecutivo, tipo_documento: f.tipo_documento, fecha: f.fecha_emision,\n  cliente: f.receptor_nombre, identificacion: f.receptor_identificacion,\n  moneda: f.moneda, impuesto: f.monto_impuesto, total: f.monto_total,\n  estado: f.estado, aceptado: f.estado === 'ACEPTADO', rechazado: f.estado === 'RECHAZADO',\n  mensaje_hacienda: f.mensaje_hacienda, correo_enviado: f.correo_enviado,\n} }];"
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000031",
+      "name": "Armar factura",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        1640
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.http_status || 200 }}"
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000032",
+      "name": "Responder factura",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        1640
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "facturacion/pdf",
+        "responseMode": "responseNode",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000034",
+      "name": "Webhook PDF",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        1800
+      ],
+      "webhookId": "f4c7a000-0000-4000-8000-000000000033",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-webhooks",
+          "name": "Facturación CR (clave de mis webhooks)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://SU-DOMINIO/api/v1/facturas/{{ encodeURIComponent($json.query.id || 'sin-id') }}/pdf",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data",
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000035",
+      "name": "Descargar PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        1800
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-api",
+          "name": "Facturación CR (API key)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "f4c7a000-0000-4000-8000-000000000036",
+              "leftValue": "={{ $json.statusCode === 200 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000037",
+      "name": "¿PDF encontrado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        1800
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "binary",
+        "options": {}
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000038",
+      "name": "Responder PDF",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        1760
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ok: false, http_status: $json.statusCode === 404 || $json.statusCode === 422 ? 404 : $json.statusCode, error: 'No se encontró el comprobante (revise ?id=)' } }];"
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000039",
+      "name": "PDF no disponible",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        1880
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.http_status || 200 }}"
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000040",
+      "name": "Responder PDF no disponible",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        1880
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 5. Acciones (un solo punto de entrada)\nPOST `/webhook/facturacion/accion` con `{ \"accion\": \"…\", … }`:\n- `anular` {factura_id, razon, codigo?} → nota de crédito por el total (codigo 01 normal, 13 error material)\n- `reenviar_correo` {factura_id, destinatarios?}\n- `consultar_hacienda` / `reintentar` {factura_id}\n- `registrar_pago` {factura_id, monto, medio_pago?} (crédito 08/10)\n- `crear_proforma` {datos, vence?} · `convertir_proforma` {proforma_id} · `anular_proforma` {proforma_id}\n- `registrar_recibida` {xml_base64} · `aceptar_recibida` / `rechazar_recibida` {documento_id, comentario}",
+        "height": 300,
+        "width": 620
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000041",
+      "name": "5. Acciones",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -300,
+        1940
       ]
     },
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "facturacion/avisos",
-        "responseMode": "onReceived",
-        "options": {
-          "rawBody": true
-        }
+        "path": "facturacion/accion",
+        "responseMode": "responseNode",
+        "authentication": "headerAuth",
+        "options": {}
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000027",
-      "name": "Webhook avisos",
+      "id": "f4c7a000-0000-4000-8000-000000000043",
+      "name": "Webhook acción",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
         0,
-        1320
+        2300
       ],
-      "webhookId": "a1b2c3d4-0000-4000-8000-000000000028"
+      "webhookId": "f4c7a000-0000-4000-8000-000000000042",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-webhooks",
+          "name": "Facturación CR (clave de mis webhooks)"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\nconst SECRETO = 'PEGUE_AQUI_EL_SECRETO_DEL_WEBHOOK';\nconst item = $input.first();\nconst firma = item.json.headers['x-facturacion-firma'] || '';\nlet cuerpo;\ntry {\n  cuerpo = await this.helpers.getBinaryDataBuffer(0, 'data');\n} catch (e) {\n  cuerpo = Buffer.from(JSON.stringify(item.json.body));\n}\nconst esperada = 'sha256=' + crypto.createHmac('sha256', SECRETO).update(cuerpo).digest('hex');\nconst valida = firma.length === esperada.length && crypto.timingSafeEqual(Buffer.from(firma), Buffer.from(esperada));\nreturn [{ json: { valida, evento: item.json.headers['x-facturacion-evento'], datos: item.json.body } }];"
+        "jsCode": "const BASE = 'https://SU-DOMINIO/api/v1';\nconst b = $json.body || {};\nconst id = encodeURIComponent(b.factura_id || b.proforma_id || b.documento_id || '');\nconst acciones = {\n  anular: ['POST', `/facturas/${id}/anular`, { razon: b.razon, codigo: b.codigo || '01', referencia_externa: b.referencia_externa }],\n  reenviar_correo: ['POST', `/facturas/${id}/correo`, { destinatarios: b.destinatarios || null }],\n  consultar_hacienda: ['POST', `/facturas/${id}/consultar`, {}],\n  reintentar: ['POST', `/facturas/${id}/reenviar`, {}],\n  registrar_pago: ['POST', `/facturas/${id}/recibo-pago`, { monto: String(b.monto), medios_pago: [{ tipo: b.medio_pago || '04' }], referencia_externa: b.referencia_externa }],\n  crear_proforma: ['POST', '/borradores', { clase: 'proforma', datos: b.datos, vence: b.vence || null }],\n  convertir_proforma: ['POST', `/borradores/${id}/emitir`, {}],\n  anular_proforma: ['DELETE', `/borradores/${id}`, null],\n  registrar_recibida: ['POST', '/recepcion', { xml_base64: b.xml_base64, respuesta_hacienda_base64: b.respuesta_hacienda_base64 }],\n  aceptar_recibida: ['POST', `/recepcion/${id}/mensaje`, { mensaje: '1', condicion_impuesto: b.condicion_impuesto || '01', detalle_mensaje: b.comentario || null }],\n  rechazar_recibida: ['POST', `/recepcion/${id}/mensaje`, { mensaje: '3', detalle_mensaje: b.comentario }],\n};\nconst a = acciones[b.accion];\nif (!a) return [{ json: { valida: false, error: `Acción desconocida: ${b.accion}. Use: ${Object.keys(acciones).join(', ')}` } }];\nif (b.accion === 'rechazar_recibida' && !b.comentario) return [{ json: { valida: false, error: 'Indique el motivo del rechazo en comentario' } }];\nif (!id && !['crear_proforma', 'registrar_recibida'].includes(b.accion)) return [{ json: { valida: false, error: 'Falta el id (factura_id, proforma_id o documento_id)' } }];\nconst [method, ruta, cuerpo] = a;\nreturn [{ json: { valida: true, accion: b.accion, method, url: BASE + ruta, cuerpo: cuerpo ? JSON.stringify(cuerpo) : '{}' } }];"
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000029",
-      "name": "Verificar firma",
+      "id": "f4c7a000-0000-4000-8000-000000000044",
+      "name": "Preparar acción",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        220,
-        1320
+        240,
+        2300
       ]
     },
     {
@@ -466,7 +781,7 @@
           },
           "conditions": [
             {
-              "id": "a1b2c3d4-0000-4000-8000-000000000030",
+              "id": "f4c7a000-0000-4000-8000-000000000045",
               "leftValue": "={{ $json.valida }}",
               "rightValue": "",
               "operator": {
@@ -480,35 +795,700 @@
         },
         "options": {}
       },
-      "id": "a1b2c3d4-0000-4000-8000-000000000031",
+      "id": "f4c7a000-0000-4000-8000-000000000046",
+      "name": "¿Acción válida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        2300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "={{ $json.method }}",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.cuerpo }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000047",
+      "name": "Ejecutar acción",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        2220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-api",
+          "name": "Facturación CR (API key)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json;\nconst ok = r.statusCode >= 200 && r.statusCode < 300;\nconst d = r.body?.detail;\nconst error = ok ? null : (typeof d === 'string' ? d : d ? JSON.stringify(d) : `HTTP ${r.statusCode}`);\nconst accion = $('Preparar acción').first().json.accion;\nconst salida = (b) => ({ accion, http_status: r.statusCode, resultado: b });\nreturn [{ json: { ok, status: r.statusCode, error, ...salida(ok ? r.body : null), documentos_disponibles: r.headers?.['x-documentos-disponibles'] ?? null } }];"
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000048",
+      "name": "Resultado de la acción",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        2220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.http_status || 200 }}"
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000049",
+      "name": "Responder acción",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        2220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ok: false, http_status: 422, error: $json.error } }];"
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000050",
+      "name": "Acción inválida",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        2400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.http_status || 200 }}"
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000051",
+      "name": "Responder acción inválida",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        2400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 6. Facturas de proveedores por responder y saldo\nGET `/webhook/facturacion/recibidas` → lista para aceptar o rechazar (sección 5).\nGET `/webhook/facturacion/saldo` → documentos disponibles y servicios.",
+        "height": 160,
+        "width": 560
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000052",
+      "name": "6. Consultas",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -300,
+        2500
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "facturacion/recibidas",
+        "responseMode": "responseNode",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000054",
+      "name": "Webhook recibidas",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        2720
+      ],
+      "webhookId": "f4c7a000-0000-4000-8000-000000000053",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-webhooks",
+          "name": "Facturación CR (clave de mis webhooks)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://SU-DOMINIO/api/v1/recepcion",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pendientes",
+              "value": "true"
+            },
+            {
+              "name": "limit",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000055",
+      "name": "Recibidas pendientes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        2720
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-api",
+          "name": "Facturación CR (API key)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json;\nconst ok = r.statusCode >= 200 && r.statusCode < 300;\nconst d = r.body?.detail;\nconst error = ok ? null : (typeof d === 'string' ? d : d ? JSON.stringify(d) : `HTTP ${r.statusCode}`);\nconst salida = (b) => ({ http_status: r.statusCode, documentos: (b || []).map((d) => ({\n  documento_id: d.id, proveedor: d.proveedor_nombre, identificacion: d.proveedor_identificacion, fecha: d.fecha_emision,\n  moneda: d.moneda, impuesto: d.total_impuesto, total: d.total_comprobante, firma_valida: d.firma_valida, origen: d.origen,\n})) });\nreturn [{ json: { ok, status: r.statusCode, error, ...salida(ok ? r.body : null), documentos_disponibles: r.headers?.['x-documentos-disponibles'] ?? null } }];"
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000056",
+      "name": "Armar recibidas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        2720
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.http_status || 200 }}"
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000057",
+      "name": "Responder recibidas",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        2720
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "facturacion/saldo",
+        "responseMode": "responseNode",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000059",
+      "name": "Webhook saldo",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        2860
+      ],
+      "webhookId": "f4c7a000-0000-4000-8000-000000000058",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-webhooks",
+          "name": "Facturación CR (clave de mis webhooks)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://SU-DOMINIO/api/v1/saldo",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000060",
+      "name": "Consultar saldo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        2860
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-api",
+          "name": "Facturación CR (API key)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $json;\nconst ok = r.statusCode >= 200 && r.statusCode < 300;\nconst d = r.body?.detail;\nconst error = ok ? null : (typeof d === 'string' ? d : d ? JSON.stringify(d) : `HTTP ${r.statusCode}`);\nconst salida = (b) => ({ http_status: r.statusCode, disponible: b?.disponible ?? null, alerta: b?.alerta ?? null,\n  por_vencer: b?.por_vencer ?? null, usados_este_mes: b?.usados_este_mes ?? null, servicios: b?.servicios ?? [] });\nreturn [{ json: { ok, status: r.statusCode, error, ...salida(ok ? r.body : null), documentos_disponibles: r.headers?.['x-documentos-disponibles'] ?? null } }];"
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000061",
+      "name": "Armar saldo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        2860
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.http_status || 200 }}"
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000062",
+      "name": "Responder saldo",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        2860
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 7. Cierre del mes para el contador (automático)\nEl día 1 a las 7:00 prepara el resumen de IVA y los libros de ventas y compras del mes anterior (Excel).\n\nConecte al final un nodo **Gmail / Send Email / Google Drive** para enviárselos al contador.",
+        "height": 180,
+        "width": 560
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000063",
+      "name": "7. Contador",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -300,
+        2940
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "monthsInterval": 1,
+              "triggerAtDayOfMonth": 1,
+              "triggerAtHour": 7
+            }
+          ]
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000064",
+      "name": "Día 1 de cada mes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        3160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const hoy = new Date();\nconst d = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);\nreturn [{ json: { anio: d.getFullYear(), mes: d.getMonth() + 1, periodo: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` } }];"
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000065",
+      "name": "Mes anterior",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        3160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://SU-DOMINIO/api/v1/reportes/resumen-iva?anio={{ $json.anio }}&mes={{ $json.mes }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000066",
+      "name": "Resumen de IVA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        3160
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-api",
+          "name": "Facturación CR (API key)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://SU-DOMINIO/api/v1/reportes/ventas.csv?anio={{ $('Mes anterior').first().json.anio }}&mes={{ $('Mes anterior').first().json.mes }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000067",
+      "name": "Libro de ventas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        3160
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-api",
+          "name": "Facturación CR (API key)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://SU-DOMINIO/api/v1/reportes/compras.csv?anio={{ $('Mes anterior').first().json.anio }}&mes={{ $('Mes anterior').first().json.mes }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000068",
+      "name": "Libro de compras",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        3160
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "facturacion-cr-api",
+          "name": "Facturación CR (API key)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { periodo } = $('Mes anterior').first().json;\nconst iva = $('Resumen de IVA').first().json.body || {};\nconst ventas = $('Libro de ventas').first().binary.data;\nconst compras = $('Libro de compras').first().binary.data;\nventas.fileName = `ventas-${periodo}.csv`;\ncompras.fileName = `compras-${periodo}.csv`;\nconst texto = [\n  `Cierre de ${periodo}`,\n  `IVA débito (ventas): ${iva.iva_debito_fiscal}`,\n  `IVA crédito (compras): ${iva.iva_credito_fiscal}`,\n  `IVA neto estimado: ${iva.iva_neto_estimado}`,\n  'Adjuntos: libros de ventas y compras (Excel).',\n].join('\\n');\nreturn [{ json: { asunto: `Facturación ${periodo}: libros e IVA`, texto, resumen_iva: iva }, binary: { ventas, compras } }];"
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000069",
+      "name": "Armar envío al contador",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        3160
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "f4c7a000-0000-4000-8000-000000000070",
+      "name": "Enviar al contador (agregue Gmail o correo)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        3160
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 8. Avisos del servicio (webhook firmado)\nConfigure esta URL de **producción** en la ficha de la empresa → Integración → Webhook, y pegue el secreto en *Verificar firma*.\n\nEventos: `comprobante.aceptado` · `comprobante.rechazado` · `comprobante.error_comunicacion` · `mensaje_receptor.*` · `saldo.bajo` · `saldo.agotado` · `paquete.por_vencer` · `suscripcion.por_vencer` · `suscripcion.vencida` · `certificado.por_vencer`",
+        "height": 220,
+        "width": 620
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000071",
+      "name": "8. Avisos",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -300,
+        3320
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "facturacion/avisos",
+        "responseMode": "onReceived",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000073",
+      "name": "Webhook avisos",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        3640
+      ],
+      "webhookId": "f4c7a000-0000-4000-8000-000000000072"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst SECRETO = 'PEGUE_AQUI_EL_SECRETO_DEL_WEBHOOK';\nconst item = $input.first();\nconst firma = item.json.headers['x-facturacion-firma'] || '';\nlet cuerpo;\ntry {\n  cuerpo = await this.helpers.getBinaryDataBuffer(0, 'data');\n} catch (e) {\n  cuerpo = Buffer.from(JSON.stringify(item.json.body));\n}\nconst esperada = 'sha256=' + crypto.createHmac('sha256', SECRETO).update(cuerpo).digest('hex');\nconst valida = firma.length === esperada.length && crypto.timingSafeEqual(Buffer.from(firma), Buffer.from(esperada));\nconst evento = item.json.headers['x-facturacion-evento'] || item.json.body?.evento || '';\nconst grupo = evento === 'comprobante.aceptado' ? 'aceptado'\n  : ['comprobante.rechazado', 'mensaje_receptor.rechazado'].includes(evento) ? 'rechazado'\n  : evento.startsWith('saldo.') || evento.startsWith('paquete.') || evento.startsWith('suscripcion.') || evento.startsWith('certificado.') ? 'servicio'\n  : 'otro';\nreturn [{ json: { valida, evento, grupo, datos: item.json.body } }];"
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000074",
+      "name": "Verificar firma",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        3640
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "f4c7a000-0000-4000-8000-000000000075",
+              "leftValue": "={{ $json.valida }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000076",
       "name": "¿Firma válida?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        440,
-        1320
+        480,
+        3640
       ]
     },
     {
       "parameters": {},
-      "id": "a1b2c3d4-0000-4000-8000-000000000032",
-      "name": "Procesar aviso (WhatsApp, correo, CRM…)",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
-      "position": [
-        660,
-        1240
-      ]
-    },
-    {
-      "parameters": {},
-      "id": "a1b2c3d4-0000-4000-8000-000000000033",
+      "id": "f4c7a000-0000-4000-8000-000000000077",
       "name": "Descartar (firma inválida)",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        660,
-        1400
+        720,
+        3840
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "f4c7a000-0000-4000-8000-000000000078",
+              "leftValue": "={{ $json.grupo === 'aceptado' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000079",
+      "name": "¿Aceptado por Hacienda?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        720,
+        3560
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "f4c7a000-0000-4000-8000-000000000080",
+      "name": "Aceptado: avisar al cliente (WhatsApp, correo, CRM)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        960,
+        3480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "f4c7a000-0000-4000-8000-000000000081",
+              "leftValue": "={{ $json.grupo === 'rechazado' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000082",
+      "name": "¿Rechazado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        960,
+        3640
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "f4c7a000-0000-4000-8000-000000000083",
+      "name": "Rechazado: revisar mensaje_hacienda y corregir",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        3560
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "f4c7a000-0000-4000-8000-000000000084",
+              "leftValue": "={{ $json.grupo === 'servicio' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f4c7a000-0000-4000-8000-000000000085",
+      "name": "¿Aviso del servicio?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        3720
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "f4c7a000-0000-4000-8000-000000000086",
+      "name": "Saldo, vencimientos o certificado: avisar al encargado",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        3640
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "f4c7a000-0000-4000-8000-000000000087",
+      "name": "Otros eventos",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        3800
       ]
     }
   ],
@@ -674,6 +1654,295 @@
         ]
       ]
     },
+    "Webhook consultar": {
+      "main": [
+        [
+          {
+            "node": "Buscar factura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar factura": {
+      "main": [
+        [
+          {
+            "node": "Armar factura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar factura": {
+      "main": [
+        [
+          {
+            "node": "Responder factura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook PDF": {
+      "main": [
+        [
+          {
+            "node": "Descargar PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descargar PDF": {
+      "main": [
+        [
+          {
+            "node": "¿PDF encontrado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿PDF encontrado?": {
+      "main": [
+        [
+          {
+            "node": "Responder PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "PDF no disponible",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PDF no disponible": {
+      "main": [
+        [
+          {
+            "node": "Responder PDF no disponible",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook acción": {
+      "main": [
+        [
+          {
+            "node": "Preparar acción",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar acción": {
+      "main": [
+        [
+          {
+            "node": "¿Acción válida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Acción válida?": {
+      "main": [
+        [
+          {
+            "node": "Ejecutar acción",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Acción inválida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ejecutar acción": {
+      "main": [
+        [
+          {
+            "node": "Resultado de la acción",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resultado de la acción": {
+      "main": [
+        [
+          {
+            "node": "Responder acción",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acción inválida": {
+      "main": [
+        [
+          {
+            "node": "Responder acción inválida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook recibidas": {
+      "main": [
+        [
+          {
+            "node": "Recibidas pendientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recibidas pendientes": {
+      "main": [
+        [
+          {
+            "node": "Armar recibidas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar recibidas": {
+      "main": [
+        [
+          {
+            "node": "Responder recibidas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook saldo": {
+      "main": [
+        [
+          {
+            "node": "Consultar saldo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar saldo": {
+      "main": [
+        [
+          {
+            "node": "Armar saldo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar saldo": {
+      "main": [
+        [
+          {
+            "node": "Responder saldo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Día 1 de cada mes": {
+      "main": [
+        [
+          {
+            "node": "Mes anterior",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mes anterior": {
+      "main": [
+        [
+          {
+            "node": "Resumen de IVA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resumen de IVA": {
+      "main": [
+        [
+          {
+            "node": "Libro de ventas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Libro de ventas": {
+      "main": [
+        [
+          {
+            "node": "Libro de compras",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Libro de compras": {
+      "main": [
+        [
+          {
+            "node": "Armar envío al contador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar envío al contador": {
+      "main": [
+        [
+          {
+            "node": "Enviar al contador (agregue Gmail o correo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Webhook avisos": {
       "main": [
         [
@@ -700,7 +1969,7 @@
       "main": [
         [
           {
-            "node": "Procesar aviso (WhatsApp, correo, CRM…)",
+            "node": "¿Aceptado por Hacienda?",
             "type": "main",
             "index": 0
           }
@@ -708,6 +1977,60 @@
         [
           {
             "node": "Descartar (firma inválida)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Aceptado por Hacienda?": {
+      "main": [
+        [
+          {
+            "node": "Aceptado: avisar al cliente (WhatsApp, correo, CRM)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "¿Rechazado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Rechazado?": {
+      "main": [
+        [
+          {
+            "node": "Rechazado: revisar mensaje_hacienda y corregir",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "¿Aviso del servicio?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Aviso del servicio?": {
+      "main": [
+        [
+          {
+            "node": "Saldo, vencimientos o certificado: avisar al encargado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Otros eventos",
             "type": "main",
             "index": 0
           }

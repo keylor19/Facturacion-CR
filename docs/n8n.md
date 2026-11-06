@@ -1,60 +1,81 @@
-# Conexión con n8n — autollenado y emisión de facturas
+# Conexión con n8n
 
-Guía para quien arma la automatización en n8n. El objetivo: mientras el agente
-escribe (cédula, producto), n8n consulta el servicio y devuelve los datos para
-llenar la factura; al final la emite y recibe el aviso de Hacienda.
+Guía para quien arma la automatización. El servicio es un **API de facturación
+electrónica** (Hacienda v4.4): su sistema, un chatbot, una tienda en línea o un
+ERP emiten por medio de n8n sin tocar XML, firmas ni Hacienda.
 
-Incluye un flujo listo para importar: [`n8n/flujo-facturacion-cr.json`](n8n/flujo-facturacion-cr.json).
+Incluye un flujo listo para importar, probado contra el servicio:
+[`n8n/flujo-facturacion-cr.json`](n8n/flujo-facturacion-cr.json).
 
-## 1. Lo que le entrega el proveedor
+| Sección del flujo | URL en n8n | Para qué |
+|---|---|---|
+| 1 | `GET /webhook/facturacion/cliente?cedula=…` | Autollenar el cliente con datos de Hacienda |
+| 2 | `GET /webhook/facturacion/producto?q=…` | Buscar productos de la empresa y códigos CABYS |
+| 3 | `POST /webhook/facturacion/emitir` | Emitir factura, tiquete o nota |
+| 4 | `GET /webhook/facturacion/factura?id=…` o `?referencia=…` | Estado de un comprobante |
+| 4 | `GET /webhook/facturacion/pdf?id=…` | PDF (para adjuntar en WhatsApp o correo) |
+| 5 | `POST /webhook/facturacion/accion` | Anular, reenviar, pagos, proformas, facturas de proveedores |
+| 6 | `GET /webhook/facturacion/recibidas` | Facturas de proveedores por aceptar o rechazar |
+| 6 | `GET /webhook/facturacion/saldo` | Documentos disponibles y servicios |
+| 7 | (automático, día 1 a las 7:00) | Resumen de IVA y libros del mes para el contador |
+| 8 | `POST /webhook/facturacion/avisos` | Recibir los avisos del servicio (lo llama el servicio) |
+
+## 1. Lo que entrega el proveedor
 
 | Dato | Ejemplo |
 |---|---|
-| URL base | `https://<dominio>/api/v1` |
-| API key de la empresa | `fcr_...` (va en el header `X-API-Key`) |
-| Documentación interactiva | `https://<dominio>/docs` · especificación `https://<dominio>/openapi.json` |
-| Secreto del webhook (opcional) | Para validar los avisos que envía el servicio |
+| Dominio del servicio | `facturas.proveedor.com` |
+| API key de la empresa | `fcr_...` (header `X-API-Key`) |
+| Secreto del webhook (para la sección 8) | Se genera al configurar el webhook de la empresa |
+| Documentación interactiva | `https://<dominio>/docs` · `https://<dominio>/openapi.json` |
 
-La API key es como una contraseña: guárdela solo en las credenciales de n8n,
-nunca en un nodo de código ni en un mensaje.
+La API key es como una contraseña: guárdela solo en las credenciales de n8n.
 
-## 2. Importar el flujo
+## 2. Instalar el flujo (5 minutos)
 
-1. n8n → **Credentials → New → Header Auth**. Nombre: `Facturación CR`.
-   *Name* = `X-API-Key`, *Value* = la API key.
-2. **Workflows → Import from File** → `flujo-facturacion-cr.json`.
-3. En los 5 nodos HTTP reemplace `SU-DOMINIO` por el dominio del servicio y
-   elija la credencial `Facturación CR`.
-4. (Avisos) En el nodo **Verificar firma** pegue el secreto del webhook y
-   agregue `NODE_FUNCTION_ALLOW_BUILTIN=crypto` a las variables de entorno de n8n.
-5. **Proteja los webhooks de n8n:** en cada nodo *Webhook* (cliente, producto y
-   emitir) active *Authentication → Header Auth* con una clave propia que solo
-   conozca el sistema del agente. Si no, cualquiera con la URL podría consultar
-   o emitir.
-6. Active el flujo.
+1. Abra `flujo-facturacion-cr.json` con un editor de texto y **reemplace
+   `SU-DOMINIO` por el dominio del servicio** (un solo "Reemplazar todo").
+2. En n8n cree dos credenciales de tipo **Header Auth** con estos nombres
+   exactos, para que el flujo las tome solo al importarlo:
 
-El flujo publica estas URLs para el agente (o su interfaz):
+   | Nombre de la credencial | Name | Value |
+   |---|---|---|
+   | `Facturación CR (API key)` | `X-API-Key` | la API key de la empresa |
+   | `Facturación CR (clave de mis webhooks)` | `X-Clave` | una clave larga inventada por usted |
 
-| URL de n8n | Para qué |
-|---|---|
-| `GET /webhook/facturacion/cliente?cedula=3101005744` | Autollenar el cliente |
-| `GET /webhook/facturacion/producto?q=martillo` | Sugerir productos y CABYS |
-| `POST /webhook/facturacion/emitir` | Emitir la factura |
-| `POST /webhook/facturacion/avisos` | Recibir avisos del servicio (se configura en el servicio, no la llama el agente) |
+   La segunda protege las URLs del flujo: su sistema debe enviar el header
+   `X-Clave` en cada llamada; sin él n8n responde 403.
+3. **Workflows → Import from File** → `flujo-facturacion-cr.json`. Si algún
+   nodo muestra la credencial en rojo, ábralo y elija la credencial correcta.
+4. Para los avisos (sección 8): en el nodo **Verificar firma** pegue el secreto
+   del webhook y agregue `NODE_FUNCTION_ALLOW_BUILTIN=crypto` a las variables de
+   entorno de n8n.
+5. Active el flujo.
 
-## 3. Autollenado mientras escribe
+Probado con n8n 2.x. Cada API key admite 300 solicitudes por minuto.
 
-**No consulte en cada tecla.**
-- Cédula: consulte solo cuando tenga entre 9 y 12 dígitos.
-- Producto: consulte después de 3 letras y medio segundo sin escribir.
+## 3. Respuestas: siempre el mismo formato
 
-Cada API key admite 300 solicitudes por minuto. Las respuestas salen de los
-datos guardados del servicio, así que son rápidas y no saturan a Hacienda.
+Todas las URLs responden JSON con `ok` y, si algo falla, `error` en español
+y el código HTTP del servicio:
 
-### Cliente — `GET /webhook/facturacion/cliente?cedula=…`
+| Código | Qué pasó | Qué hacer |
+|---|---|---|
+| 401 | API key inválida o revocada | Revisar la credencial |
+| 402 | Sin documentos disponibles | Comprar un paquete al proveedor |
+| 403 | La conexión por API no está activa o venció, o falta `X-Clave` | Revisar la clave / contactar al proveedor |
+| 404 | No existe (factura, proforma, documento) | Revisar el id |
+| 409 | Ya se hizo (p. ej. factura ya respondida, proforma anulada) | Nada que repetir |
+| 422 | Datos incompletos o inválidos (`error` dice cuál) | Corregir y reenviar |
+| 429 | Demasiadas solicitudes | Esperar los segundos del header `Retry-After` |
+| 503 | El servicio no tiene correo configurado (solo `reenviar_correo`) | Avisar al proveedor |
 
-Por dentro llama a `GET /hacienda/contribuyentes/{cedula}` (datos de Hacienda)
-y a `GET /catalogo/clientes?q={cedula}` (correo y datos guardados). Respuesta:
+## 4. Autollenado mientras se escribe
+
+No consulte en cada tecla: la cédula cuando tenga entre 9 y 12 dígitos; el
+producto después de 3 letras y medio segundo sin escribir.
+
+**Cliente** — `GET /webhook/facturacion/cliente?cedula=3101005744`
 
 ```json
 {
@@ -67,50 +88,35 @@ y a `GET /catalogo/clientes?q={cedula}` (correo y datos guardados). Respuesta:
 }
 ```
 
-- `inscrito: false` + `mensaje: "No está inscrito en Hacienda"` → avise al agente.
-- `correo: null` → pídale el correo (Hacienda no lo publica). Si el cliente ya
-  está guardado en la empresa, viene lleno.
-- `datos_guardados_por_falla_de_hacienda: true` → Hacienda no respondió; los
-  datos son los últimos guardados (sirven para facturar).
+- `inscrito: false` → avise (Hacienda puede rechazar la factura).
+- `correo: null` → pídalo (Hacienda no lo publica); si el cliente ya está guardado en la empresa, viene lleno.
+- `datos_guardados_por_falla_de_hacienda: true` → Hacienda no respondió y se usan los últimos datos guardados (sirven para facturar).
 
-### Producto — `GET /webhook/facturacion/producto?q=…`
-
-Llama a `GET /catalogo/productos?q=` (productos de la empresa) y
-`GET /hacienda/cabys?q=` (catálogo oficial CABYS, ~20 500 códigos). Respuesta:
+**Producto** — `GET /webhook/facturacion/producto?q=contabilidad`
 
 ```json
 {
-  "q": "servicios contables",
-  "productos": [{ "origen": "mis_productos", "producto_id": "…", "codigo": "CONS-01",
-                  "descripcion": "Consultoría", "codigo_cabys": "8222100000000",
-                  "unidad_medida": "Sp", "precio_unitario": "50000.00000",
-                  "codigo_tarifa_iva": "08", "existencia": null }],
-  "cabys": [{ "origen": "cabys", "codigo_cabys": "8222100000000",
-              "descripcion": "Servicios de contabilidad", "impuesto": 13, "codigo_tarifa_iva": "08" }]
+  "q": "contabilidad",
+  "productos": [{ "origen": "mis_productos", "producto_id": "…", "codigo": "CONT-01", "descripcion": "Contabilidad mensual",
+                  "categoria": "Servicios", "codigo_cabys": "8222100000000", "unidad_medida": "Sp",
+                  "precio_unitario": "50000.00000", "codigo_tarifa_iva": "08", "es_combo": false, "existencia": null }],
+  "cabys": [{ "origen": "cabys", "codigo_cabys": "8222100000000", "descripcion": "Servicios de contabilidad",
+              "impuesto": 13, "codigo_tarifa_iva": "08" }]
 }
 ```
 
-Prefiera `productos` (ya tienen precio). Si eligen uno, envíe su `producto_id`
-en la línea: el servicio descuenta el inventario. De `cabys` solo salen el
-código y el IVA; el precio lo indica el agente.
+Prefiera `productos` (ya traen precio). Si eligen uno, envíe su `producto_id`
+en la línea: el servicio descuenta el inventario (y en un combo, el de sus
+componentes). De `cabys` solo salen el código y el IVA; el precio lo pone usted.
 
-### Otras consultas útiles (directo al servicio, con la misma credencial)
+## 5. Emitir — `POST /webhook/facturacion/emitir`
 
-| Consulta | Endpoint |
-|---|---|
-| Exoneración del cliente y productos que cubre | `GET /hacienda/exoneraciones/AL-00000000-24?detalle=true` |
-| Tipo de cambio del día | `GET /hacienda/tipo-cambio` |
-| ¿El cliente es productor agropecuario o de pesca? (tarifa 1 % de insumos) | `GET /hacienda/productores/{cedula}` |
-| Documentos disponibles | `GET /saldo` |
-
-## 4. Emitir — `POST /webhook/facturacion/emitir`
-
-Envíe el JSON de la factura tal cual lo recibe el servicio (`POST /facturas`):
+Envíe el comprobante tal cual lo recibe el servicio (`POST /facturas`):
 
 ```json
 {
   "tipo_documento": "01",
-  "referencia_externa": "CHAT-20261006-0001",
+  "referencia_externa": "PEDIDO-20261027-0001",
   "receptor": { "nombre": "PURDY MOTOR SOCIEDAD ANONIMA", "tipo_identificacion": "02",
                 "numero_identificacion": "3101005744", "correo": "facturas@cliente.com" },
   "codigo_actividad_receptor": "4520.0",
@@ -119,57 +125,96 @@ Envíe el JSON de la factura tal cual lo recibe el servicio (`POST /facturas`):
       "unidad_medida": "Sp", "precio_unitario": "50000", "codigo_tarifa_iva": "08" }
   ],
   "condicion_venta": "01",
-  "medios_pago": [{ "tipo": "04" }]
+  "medios_pago": [{ "tipo": "06" }]
 }
 ```
 
-- **`referencia_externa` única por venta** (ID de la conversación o del pedido).
-  Si n8n reintenta, el servicio devuelve la misma factura y no cobra otro documento.
-- `tipo_documento`: `01` factura, `04` tiquete (sin receptor), `03` nota de crédito.
-- `medios_pago.tipo`: `01` efectivo, `02` tarjeta, `04` transferencia, `06` SINPE Móvil.
-- Montos y cantidades como texto (`"50000"`). El precio es **sin IVA**.
-- Detalle completo de campos: [guía de integración](integracion.md) y `/docs`.
-
-Respuesta del flujo:
+Respuesta:
 
 ```json
-{ "ok": true, "status": 202, "factura_id": "8f1c…", "clave": "506…", "estado": "PENDIENTE",
-  "documentos_disponibles": "1234", "error": null }
+{ "ok": true, "status": 202, "factura_id": "d2fb…", "clave": "506…", "estado": "PENDIENTE",
+  "documentos_disponibles": "493", "error": null }
 ```
 
-`PENDIENTE` significa que la factura ya está firmada y en cola para Hacienda. El
-resultado final llega por el aviso (sección 5) o con `GET /facturas/{factura_id}`.
-El PDF se descarga con `GET /facturas/{factura_id}/pdf`. Cuando Hacienda acepta,
-el servicio le envía el PDF y el XML al correo del cliente.
+- **`referencia_externa` única por venta** (ID del pedido o de la conversación).
+  Si n8n reintenta, el servicio devuelve **la misma factura** y no cobra otro documento.
+- `tipo_documento`: `01` factura (cliente con cédula), `04` tiquete (sin receptor),
+  `03` nota de crédito, `02` nota de débito, `09` exportación.
+- `medios_pago.tipo`: `01` efectivo, `02` tarjeta, `04` transferencia, `06` SINPE Móvil.
+  Con varios medios, cada uno lleva su `monto`.
+- Montos y cantidades como texto (`"50000"`). El precio es **sin IVA**.
+- `PENDIENTE` = firmada y en cola para Hacienda. El resultado llega por el aviso
+  (sección 8) o consultando (sección 6). Cuando Hacienda acepta, el servicio le
+  envía el PDF y el XML al correo del cliente.
+- Campos completos: [guía de integración](integracion.md) y `/docs`.
 
-| `status` | Qué pasó | Qué hacer |
+## 6. Consultar y descargar
+
+- `GET /webhook/facturacion/factura?id=<factura_id>` o `?referencia=PEDIDO-…`
+  → `estado`, `aceptado`, `rechazado`, `mensaje_hacienda`, totales y consecutivo.
+- `GET /webhook/facturacion/pdf?id=<factura_id>` → el PDF (archivo). Úselo para
+  enviarlo por WhatsApp o adjuntarlo en un correo.
+- `GET /webhook/facturacion/saldo` → `disponible`, `alerta` (quedan pocos),
+  `por_vencer` y el estado de los servicios contratados.
+- `GET /webhook/facturacion/recibidas` → facturas de proveedores que faltan
+  aceptar o rechazar (`documento_id`, proveedor, total, IVA, `firma_valida`).
+
+## 7. Acciones — `POST /webhook/facturacion/accion`
+
+Un solo punto de entrada; el campo `accion` dice qué hacer:
+
+| `accion` | Campos | Qué hace |
 |---|---|---|
-| 401 | API key inválida | Revisar la credencial |
-| 402 | Sin documentos disponibles | Comprar un paquete al proveedor |
-| 403 | La conexión por API de la empresa no está activa o venció | Contactar al proveedor |
-| 422 | Datos incompletos o inválidos (`error` dice cuál) | Corregir y reenviar |
-| 429 | Demasiadas solicitudes | Esperar los segundos del header `Retry-After` |
+| `anular` | `factura_id`, `razon`, `codigo` (opcional: `01` normal, `13` error material) | Nota de crédito por el total. Con `13` el ajuste va al mes de la factura original |
+| `reenviar_correo` | `factura_id`, `destinatarios` (opcional, lista) | Reenvía PDF y XML |
+| `consultar_hacienda` | `factura_id` | Pide a Hacienda el estado ahora |
+| `reintentar` | `factura_id` | Reenvía lo que quedó con error de comunicación |
+| `registrar_pago` | `factura_id`, `monto`, `medio_pago` | Recibo electrónico de pago (crédito al Estado o IVA a 90 días) |
+| `crear_proforma` | `datos` (igual que emitir), `vence` (opcional) | Cotización numerada con PDF, sin enviar a Hacienda |
+| `convertir_proforma` | `proforma_id` | La emite como factura (no se duplica si se repite) |
+| `anular_proforma` | `proforma_id` | Anula la cotización |
+| `registrar_recibida` | `xml_base64` | Registra el XML de un proveedor (si no llegó por el correo conectado) |
+| `aceptar_recibida` | `documento_id`, `comentario` (opcional) | Acepta ante Hacienda y acredita el IVA |
+| `rechazar_recibida` | `documento_id`, `comentario` (obligatorio) | Rechaza ante Hacienda; el comentario lo ve el proveedor |
 
-## 5. Avisos del servicio — `POST /webhook/facturacion/avisos`
+Ejemplo: `{ "accion": "anular", "factura_id": "d2fb…", "razon": "Cliente equivocado", "codigo": "13" }`.
+Respuesta: `{ "ok": true, "accion": "anular", "resultado": { … } }`.
 
-El proveedor configura en la ficha de la empresa la URL **de producción** de este
-webhook de n8n (debe ser HTTPS pública) y le entrega el secreto. Eventos:
-`comprobante.aceptado`, `comprobante.rechazado`, `comprobante.error_comunicacion`,
-`saldo.bajo`, `saldo.agotado`, `paquete.por_vencer`, `certificado.por_vencer`.
+## 8. Avisos del servicio — `POST /webhook/facturacion/avisos`
 
+El proveedor configura en la ficha de la empresa (Integración → Webhook) la
+URL **de producción** de este webhook (HTTPS pública) y le entrega el secreto.
 El nodo **Verificar firma** comprueba el header `X-Facturacion-Firma`
-(`sha256=` + HMAC del cuerpo con el secreto). Continúe solo si `valida` es
-`true`. Luego conecte lo que necesite: mensaje de WhatsApp al cliente, correo,
-actualizar un CRM, etc.
+(`sha256=` + HMAC del cuerpo con el secreto) y descarta lo que no esté firmado.
+Luego el flujo separa los avisos en tres ramas para que conecte lo que necesite:
 
-## 6. Pruebas
+| Rama | Eventos | Idea |
+|---|---|---|
+| Aceptado | `comprobante.aceptado` | Enviar el PDF por WhatsApp, marcar el pedido como facturado |
+| Rechazado | `comprobante.rechazado`, `mensaje_receptor.rechazado` | Avisar al encargado con `mensaje_hacienda` |
+| Aviso del servicio | `saldo.bajo`, `saldo.agotado`, `paquete.por_vencer`, `suscripcion.por_vencer`, `suscripcion.vencida`, `certificado.por_vencer` | Avisar a quien compra los documentos o renueva el certificado |
 
-Empiece en el **ambiente de pruebas** (las facturas van al sandbox de Hacienda y
-no tienen validez fiscal). Cédulas para probar el autollenado:
+Otros eventos (`comprobante.error_comunicacion`, `mensaje_receptor.aceptado`)
+llegan a "Otros eventos": el servicio los reintenta solo.
 
-| Cédula | Resultado esperado |
+## 9. Cierre del mes para el contador (sección 7 del flujo)
+
+Corre solo el día 1 a las 7:00: trae el resumen de IVA y los libros de ventas
+y compras (Excel) del mes anterior y los deja listos con asunto y texto. Cambie
+el último nodo por **Gmail**, **Send Email** o **Google Drive** para enviárselos
+al contador. Si necesita los XML, use `GET /reportes/documentos.zip?desde=…&hasta=…`
+con la misma credencial.
+
+## 10. Pruebas
+
+Empiece en el **ambiente de pruebas** (los comprobantes van al sandbox de
+Hacienda y no tienen validez fiscal).
+
+| Prueba | Resultado esperado |
 |---|---|
-| `3101005744` | Inscrito, 8 actividades |
-| `206500188` | Persona física inscrita |
-| `399999999999` | No inscrito |
-| `3101` | "La cédula debe tener entre 9 y 12 dígitos" |
+| `cliente?cedula=3101005744` | Inscrito, varias actividades |
+| `cliente?cedula=3101` | 422 "La cédula debe tener entre 9 y 12 dígitos" |
+| `producto?q=contabilidad` | CABYS `8222100000000` |
+| Emitir dos veces con la misma `referencia_externa` | La misma `factura_id` (no duplica) |
+| `factura` sin `id` ni `referencia` | 422 "Indique ?id= o ?referencia=" |
+| Cualquier URL sin el header `X-Clave` | 403 |

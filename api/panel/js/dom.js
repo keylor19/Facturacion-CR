@@ -138,10 +138,13 @@ export async function conBoton(boton, accion) {
 // el tipo (o al salir del campo), una vez por número. vigente() indica si el número
 // sigue siendo el mismo al llegar la respuesta. Devuelve la función para forzar la consulta.
 const LONGITUD_ID = { '01': [9, 10, 11, 12], '02': [10], '03': [11, 12], '04': [10] };
+export const limpiarIdentificacion = (texto) => String(texto || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+
 export function alCompletarCedula(numero, tipo, consultar) {
   let ultima = '';
   let espera;
-  const actual = () => numero.value.replace(/\D/g, '');
+  // Solo letras y dígitos: desde 2026 la cédula jurídica puede ser alfanumérica
+  const actual = () => limpiarIdentificacion(numero.value);
   const lanzar = async (forzar = false) => {
     const cedula = actual();
     if (cedula.length < 9 || (!forzar && cedula === ultima)) return;
@@ -170,26 +173,35 @@ export function avisoRespaldo(datos) {
 }
 
 // Aviso con el estado del contribuyente en Hacienda (inscrito, moroso, omiso).
-export function avisoContribuyente(c, activas) {
+// comoCliente: a un cliente se le factura aunque no esté inscrito (solo se informa);
+// para la empresa que emite, no estar inscrita sí es un problema.
+export function avisoContribuyente(c, activas, { comoCliente = false } = {}) {
   const s = c.situacion || {};
   const inscrito = (s.estado || '').toLowerCase() === 'inscrito';
+  const estado = s.estado || 'desconocido';
   return [
     avisoRespaldo(c),
     inscrito
       ? aviso(`INSCRITO · ${c.nombre} · ${c.regimen?.descripcion || ''} · ${activas.length} actividad(es) activa(s)`, 'ok')
-      : aviso(`NO INSCRITO como contribuyente (estado en Hacienda: ${s.estado || 'desconocido'}).`, 'error'),
+      : comoCliente
+        ? aviso(`No está inscrito como contribuyente (estado en Hacienda: ${estado}). Se le puede facturar igual con su cédula.`, 'info')
+        : aviso(`NO INSCRITO como contribuyente (estado en Hacienda: ${estado}).`, 'error'),
     s.moroso === 'SI' || s.omiso === 'SI' ? aviso('Tiene obligaciones pendientes con Hacienda (moroso u omiso).', 'alerta') : null,
   ];
 }
 
-export const avisoNoInscrito = (cedula) => aviso(`NO INSCRITO: la identificación ${cedula} no aparece registrada en Hacienda.`, 'error');
+export const avisoNoInscrito = (cedula, { comoCliente = false } = {}) => (comoCliente
+  ? aviso(`La identificación ${cedula} no aparece en Hacienda. Se le puede facturar igual; revise que esté bien escrita.`, 'info')
+  : aviso(`NO INSCRITO: la identificación ${cedula} no aparece registrada en Hacienda.`, 'error'));
 
 export function campo(etiqueta, control) {
   return h('label', {}, etiqueta, control);
 }
 
+// Las opciones muestran solo el nombre (lo que entiende la persona); el código de
+// Hacienda queda en el valor y como ayuda al pasar el mouse.
 export function opciones(mapa, seleccionado, conVacio = false) {
-  const lista = Object.entries(mapa).map(([v, t]) => h('option', { value: v, selected: v === seleccionado }, `${v} · ${t}`));
+  const lista = Object.entries(mapa).map(([v, t]) => h('option', { value: v, selected: v === seleccionado, title: `Código ${v}` }, t));
   return conVacio ? [h('option', { value: '' }, '—'), ...lista] : lista;
 }
 

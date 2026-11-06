@@ -1,3 +1,4 @@
+// Planes y ventas (administrador): paquetes de documentos y mensualidades que se venden, e ingresos.
 import { api } from '../api.js';
 import { h, vaciar, dinero, fecha, tabla, modal, conBoton, toast, campo, aviso, mesActual, selectorMes } from '../dom.js';
 import { contexto } from '../app.js';

@@ -83,9 +83,9 @@ class Emisor(Base):
     webhook_url = Column(String(500), nullable=True)
     webhook_secret_cifrado = Column(LargeBinary, nullable=True)
 
-    # Módulo de facturación en línea (panel: emitir, catálogos e inventario) para
-    # los usuarios de la empresa. Se puede vender como servicio adicional.
-    facturacion_web = Column(Boolean, nullable=False, default=True, server_default="true")
+    # Panel web para los usuarios de la empresa: servicio adicional y opcional (se cobra
+    # aparte o se da como regalía). El producto principal es la conexión por API.
+    facturacion_web = Column(Boolean, nullable=False, default=False, server_default="false")
     # Conexión por API (el sistema de facturación del cliente se integra con llaves de API).
     acceso_api = Column(Boolean, nullable=False, default=True, server_default="true")
     logo = Column(LargeBinary, nullable=True)            # PNG o JPEG para el PDF
@@ -184,6 +184,12 @@ class Factura(Base):
     factura_origen_id = Column(UUID(as_uuid=False), ForeignKey("facturas.id"), nullable=True)
     # Turno de caja del punto de venta en que se cobró (null = emitido fuera del POS)
     caja_id = Column(UUID(as_uuid=False), ForeignKey("cajas.id"), nullable=True, index=True)
+    # Primera referencia (InformacionReferencia): código de la nota 9 y clave del documento citado
+    codigo_referencia = Column(String(2), nullable=True)
+    referencia_clave = Column(String(50), nullable=True, index=True)
+    # Mes (día 1) al que va el efecto contable: el de emisión, salvo notas con código 13/14,
+    # que van al mes del comprobante que modifican (Anexos y Estructuras 4.4, nota 9)
+    periodo_fiscal = Column(Date, nullable=True, index=True)
 
     # Contraparte: receptor (o proveedor en la factura de compra 08)
     receptor_nombre = Column(String(200), nullable=True)
@@ -390,6 +396,9 @@ class Paquete(Base):
     anulado = Column(Boolean, nullable=False, default=False)
     creado_por = Column(String(160), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow, index=True)
+    # Comprobante que la plataforma le emitió al cliente por esta venta
+    factura_id = Column(UUID(as_uuid=False), ForeignKey("facturas.id", ondelete="SET NULL"), nullable=True)
+    comprobante_error = Column(Text, nullable=True)
 
     plan = relationship("Plan")
 
@@ -437,6 +446,29 @@ class Suscripcion(Base):
     anulada = Column(Boolean, nullable=False, default=False)
     creado_por = Column(String(200), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow, index=True)
+    factura_id = Column(UUID(as_uuid=False), ForeignKey("facturas.id", ondelete="SET NULL"), nullable=True)
+    comprobante_error = Column(Text, nullable=True)
+
+
+class AjustesVentas(Base):
+    """
+    Una sola fila: cómo factura la plataforma sus ventas (paquetes y mensualidades)
+    a las empresas cliente. emisor_ventas es la empresa del dueño de la plataforma.
+    """
+    __tablename__ = "ajustes_ventas"
+
+    id = Column(Integer, primary_key=True, default=1)
+    emisor_ventas_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="SET NULL"), nullable=True)
+    codigo_cabys = Column(String(13), nullable=True)
+    codigo_tarifa_iva = Column(String(2), nullable=False, default="08")
+    precio_incluye_iva = Column(Boolean, nullable=False, default=True)
+    tipo_comprobante = Column(String(2), nullable=False, default="01")   # 01 factura | 04 tiquete
+    medio_pago = Column(String(2), nullable=False, default="04")         # transferencia
+    # Avisos comerciales al cliente (pocos documentos, servicio por vencer)
+    instrucciones_pago = Column(Text, nullable=True)     # cuentas IBAN, SINPE Móvil…
+    contacto_ventas = Column(String(200), nullable=True) # teléfono / WhatsApp / correo para comprar
+    correo_avisos = Column(String(160), nullable=True)   # copia de cada aviso al administrador
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class Cliente(Base):

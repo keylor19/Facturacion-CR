@@ -1,3 +1,4 @@
+// Productos y servicios de la empresa: precios, CABYS, impuestos, categorías, combos, inventario e importación CSV.
 import { api } from '../api.js';
 import { h, vaciar, tabla, modal, conBoton, toast, campo, dinero, fecha } from '../dom.js';
 import { TARIFAS_IVA, UNIDADES } from '../catalogos.js';
@@ -230,7 +231,7 @@ export async function vistaProductos(cont, estado = { q: '', filtro: '', categor
       { titulo: 'Existencia', valor: existenciaBadge },
       { titulo: '', valor: acciones },
     ], lista, (p) => dialogoProducto(p, refrescar))),
-    h('p', { class: 'suave' }, 'Toque un producto para editarlo. Al facturar, use "+ Del catálogo" para agregarlo con un clic.'));
+    h('p', { class: 'suave' }, 'Toque un producto para editarlo. Al facturar, use «+ Agregar de mis productos» para agregarlo con un clic.'));
 }
 
 export const vistaCombos = (cont) => vistaProductos(cont, { q: '', filtro: 'solo_combos', categoria: '' });

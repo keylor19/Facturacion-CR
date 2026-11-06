@@ -64,13 +64,14 @@ export async function api(ruta, { method = 'GET', body, form, raw = false, conEm
   return tipo.includes('json') ? r.json() : r.text();
 }
 
-async function comoBlob(ruta) {
-  const r = await api(ruta, { raw: true });
+// emisor: documento de una empresa distinta de la seleccionada (pantallas de administración)
+async function comoBlob(ruta, emisor = null) {
+  const r = await api(ruta, { raw: true, emisor });
   return r.blob();
 }
 
-export async function descargar(ruta, nombre) {
-  const url = URL.createObjectURL(await comoBlob(ruta));
+export async function descargar(ruta, nombre, emisor = null) {
+  const url = URL.createObjectURL(await comoBlob(ruta, emisor));
   const a = document.createElement('a');
   a.href = url;
   a.download = nombre;
@@ -80,9 +81,9 @@ export async function descargar(ruta, nombre) {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
-export async function abrir(ruta) {
+export async function abrir(ruta, emisor = null) {
   const ventana = window.open('', '_blank');
-  const url = URL.createObjectURL(await comoBlob(ruta));
+  const url = URL.createObjectURL(await comoBlob(ruta, emisor));
   if (ventana) ventana.location = url; else location.href = url;
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }

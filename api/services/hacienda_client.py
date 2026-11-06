@@ -24,7 +24,7 @@ from config.settings import endpoints_hacienda, get_settings
 
 logger = logging.getLogger(__name__)
 
-RE_CLAVE_CONSULTA = re.compile(r"^\d{50}(-\d{20})?$")
+RE_CLAVE_CONSULTA = re.compile(r"^[A-Za-z0-9]{50}(-\d{20})?$")
 
 
 class HaciendaClientError(Exception):
@@ -110,7 +110,7 @@ def listar_comprobantes(emisor: Emisor, params: dict) -> tuple[list, str | None]
 
 def obtener_comprobante(emisor: Emisor, clave: str) -> dict:
     """GET /comprobantes/{clave}."""
-    if not re.fullmatch(r"\d{50}", clave):
+    if not re.fullmatch(r"[A-Za-z0-9]{50}", clave):
         raise ValueError("Clave inválida")
     resp = _request(emisor, "GET", f"/comprobantes/{clave}", timeout=30)
     if resp.status_code == 404:

@@ -113,7 +113,7 @@ export function crearVenta({ enviar = (datos) => api('/facturas', { method: 'POS
         cliente.correo ? [h('br'), h('span', { class: 'suave' }, cliente.correo)] : null),
       h('button', { type: 'button', class: 'chico', onclick: () => { cliente = null; pintarCliente(); } }, 'Quitar cliente (emitir tiquete)')]
       : [h('p', { class: 'suave' }, 'Consumidor final: se emite tiquete electrónico.'),
-        h('button', { type: 'button', onclick: () => dialogoElegirCliente((c) => { cliente = c; pintarCliente(); }) }, 'Elegir cliente (factura)')]);
+        h('button', { type: 'button', onclick: () => dialogoElegirCliente((c) => { cliente = c; pintarCliente(); }) }, 'Elegir de mis clientes (factura)')]);
     pintar();
   }
 

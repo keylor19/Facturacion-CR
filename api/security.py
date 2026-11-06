@@ -169,18 +169,16 @@ def emisor_actual(
     # Llave de una empresa: requiere el servicio de conexión por API (habilitado y pagado)
     if principal.api_key_id and not principal.es_admin and not suscripciones.activo(db, emisor, "api"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, suscripciones.motivo_inactivo(db, emisor, "api"))
+    # Usuario del panel de una empresa: el panel web es un servicio adicional (pagado o en regalía)
+    if principal.usuario_id and not principal.es_admin and not suscripciones.activo(db, emisor, "facturacion_web"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, suscripciones.motivo_inactivo(db, emisor, "facturacion_web"))
     return emisor
 
 
-def emisor_facturacion_web(
-    principal: Principal = Depends(autenticar), emisor: Emisor = Depends(emisor_actual),
-    db: Session = Depends(get_db),
-) -> Emisor:
+def emisor_facturacion_web(emisor: Emisor = Depends(emisor_actual)) -> Emisor:
     """
-    Emitir y usar catálogos/inventario desde el panel requiere el servicio de
-    facturación en línea de la empresa (habilitado y pagado). No aplica a los
-    sistemas integrados por API ni a los administradores.
+    Rutas de facturación en línea (emitir, catálogos, inventario, POS). El panel
+    web ya se exige en emisor_actual para todo usuario de empresa; se conserva
+    este nombre para marcar las rutas que solo tienen sentido desde el panel o la API.
     """
-    if principal.usuario_id and not principal.es_admin and not suscripciones.activo(db, emisor, "facturacion_web"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, suscripciones.motivo_inactivo(db, emisor, "facturacion_web"))
     return emisor

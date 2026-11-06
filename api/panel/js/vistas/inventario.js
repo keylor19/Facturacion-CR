@@ -1,3 +1,4 @@
+// Inventario: existencias por producto y movimientos (entradas, salidas, ajustes).
 import { api, descargar } from '../api.js';
 import { h, vaciar, tabla, conBoton, toast, dinero, aviso } from '../dom.js';
 import { cantidad, dialogoMovimiento, existenciaBadge, tablaMovimientos } from './productos.js';

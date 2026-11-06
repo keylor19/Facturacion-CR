@@ -1,11 +1,23 @@
+// Formulario de emisión en 3 pasos (a quién, qué, cómo pagan) para factura, tiquete, notas, compra y exportación;
+// también guarda proformas y preliminares. Lo que arma es el mismo JSON que recibe POST /api/v1/facturas.
 import { abrir, api } from '../api.js';
-import { h, vaciar, dinero, modal, conBoton, toast, campo, opciones, tabla, aviso, alCompletarCedula, avisoContribuyente, avisoNoInscrito, avisoRespaldo } from '../dom.js';
+import { h, vaciar, dinero, modal, conBoton, toast, campo, opciones, tabla, aviso, alCompletarCedula, avisoContribuyente, avisoNoInscrito, avisoRespaldo, limpiarIdentificacion } from '../dom.js';
 import {
   TIPOS_DOCUMENTO, TIPOS_IDENTIFICACION, CONDICIONES_VENTA, MEDIOS_PAGO, TARIFAS_IVA, DESCUENTOS, UNIDADES,
-  INSTITUCIONES_EXONERACION, TIPOS_DOC_REFERENCIA, CODIGOS_REFERENCIA, SITUACIONES,
+  INSTITUCIONES_EXONERACION, TIPOS_DOC_REFERENCIA, CODIGOS_REFERENCIA, CODIGOS_POR_TIPO, EFECTO_CODIGO, SITUACIONES,
 } from '../catalogos.js';
 import { selectorUbicacion } from '../ubicacion.js';
 import { descuentosVigentes, mejorDescuento } from '../promociones.js';
+
+// Explicación corta de cada documento, debajo del título
+const AYUDA_TIPO = {
+  '01': 'Para clientes con cédula. Le llega por correo y le sirve para deducir el gasto.',
+  '04': 'Para consumidor final. Los datos del cliente son opcionales.',
+  '03': 'Anula o rebaja una factura ya enviada: indique cuál factura y qué se devuelve.',
+  '02': 'Aumenta el monto de una factura ya enviada.',
+  '08': 'Para comprarle a una persona o negocio que no emite factura electrónica.',
+  '09': 'Para ventas a clientes en el extranjero.',
+};
 
 const TARIFA_POR_PORCENTAJE = { 13: '08', 8: '07', 4: '04', 2: '03', 1: '02', 0.5: '09' };
 const tarifasOpciones = (sel) => Object.entries(TARIFAS_IVA).map(([k, [t]]) => h('option', { value: k, selected: k === sel }, t));
@@ -53,12 +65,12 @@ export function dialogoElegirProducto(alElegir) {
   buscar().catch((err) => toast(err.message, 'error'));
 }
 
-function bloquePersona(titulo, { conUbicacion = false, conCatalogo = false } = {}) {
+function bloquePersona(titulo, { conUbicacion = false, conCatalogo = false, alIdentificar = null } = {}) {
   const tipo = h('select', {}, opciones(TIPOS_IDENTIFICACION, '01'));
-  const numero = h('input', { type: 'text', maxlength: '20', placeholder: 'Sin guiones' });
-  const nombre = h('input', { type: 'text', maxlength: '100' });
-  const correo = h('input', { type: 'email' });
-  const actividad = h('select', {}, h('option', { value: '' }, '— (opcional)'));
+  const numero = h('input', { type: 'text', maxlength: '20', placeholder: 'Ej.: 105550555 (sin guiones)', inputmode: 'numeric' });
+  const nombre = h('input', { type: 'text', maxlength: '100', placeholder: conCatalogo ? 'Vacío: sale «Consumidor final»' : '' });
+  const correo = h('input', { type: 'email', placeholder: 'Opcional' });
+  const actividad = h('select', {}, h('option', { value: '' }, 'Se llena sola'));
   const info = h('div');
   const lugar = selectorUbicacion();
   const ubic = {
@@ -92,6 +104,7 @@ function bloquePersona(titulo, { conUbicacion = false, conCatalogo = false } = {
   // Al escribir la identificación se llena todo: primero desde Mis clientes
   // (correo, ubicación) y luego con los datos de Hacienda (nombre, estado, actividades).
   const consultar = alCompletarCedula(numero, tipo, async (id, vigente) => {
+    if (alIdentificar) alIdentificar(id, vigente);
     let delCatalogo = null;
     if (conCatalogo) {
       try {
@@ -106,15 +119,16 @@ function bloquePersona(titulo, { conUbicacion = false, conCatalogo = false } = {
     try {
       c = await api(`/hacienda/contribuyentes/${id}`);
     } catch (e) {
-      if (vigente() && !delCatalogo) vaciar(info, e.status === 404 ? avisoNoInscrito(id) : aviso(e.message, 'error'));
+      if (vigente() && !delCatalogo) vaciar(info, e.status === 404 ? avisoNoInscrito(id, { comoCliente: true }) : aviso(e.message, 'error'));
       return;
     }
     if (!vigente()) return;
     nombre.value = c.nombre || nombre.value;
     if (c.tipoIdentificacion) tipo.value = c.tipoIdentificacion;
     const activas = (c.actividades || []).filter((a) => a.estado === 'A' || !a.estado);
-    const elegida = delCatalogo?.codigo_actividad
-      || String((activas.find((a) => a.tipo === 'P') || activas[0] || {}).codigo || '').padStart(6, '0');
+    // Sin actividades (persona no inscrita) no se elige ninguna: antes quedaba «000000»
+    const principal = activas.find((a) => a.tipo === 'P') || activas[0];
+    const elegida = delCatalogo?.codigo_actividad || (principal ? String(principal.codigo).padStart(6, '0') : '');
     vaciar(actividad, h('option', { value: '' }, '— (opcional)'),
       activas.map((a) => {
         const cod = String(a.codigo).padStart(6, '0');
@@ -122,18 +136,22 @@ function bloquePersona(titulo, { conUbicacion = false, conCatalogo = false } = {
       }),
       elegida && !activas.some((a) => String(a.codigo).padStart(6, '0') === elegida)
         ? h('option', { value: elegida, selected: true }, elegida) : null);
-    vaciar(info, delCatalogo ? aviso(`Cliente del catálogo: ${delCatalogo.nombre}`, 'ok') : null, avisoContribuyente(c, activas));
+    vaciar(info, delCatalogo ? aviso(`Cliente del catálogo: ${delCatalogo.nombre}`, 'ok') : null,
+      avisoContribuyente(c, activas, { comoCliente: true }));
   });
-  const buscar = h('button', { type: 'button', onclick: () => conBoton(buscar, consultar) }, 'Volver a consultar');
-  const elegir = conCatalogo ? h('button', { type: 'button', class: 'primario', onclick: () => dialogoElegirCliente(cargarCliente) }, 'Elegir cliente') : null;
+  const buscar = h('button', { type: 'button', onclick: () => conBoton(buscar, consultar) }, 'Buscar en Hacienda');
+  const elegir = conCatalogo ? h('button', { type: 'button', onclick: () => dialogoElegirCliente(cargarCliente) }, 'Elegir de mis clientes') : null;
+  const nota = h('p', { class: 'suave ayuda-seccion' },
+    'Escriba la identificación: el nombre y la actividad se llenan solos con los datos de Hacienda.');
   [numero, nombre].forEach((el) => el.addEventListener('input', () => { clienteId = null; }));
 
   const seccion = h('section', { class: 'tarjeta' },
     h('div', { class: 'encabezado' }, h('h2', {}, titulo), elegir),
+    nota,
     h('div', { class: 'campos' },
+      h('div', { class: 'fila doble' }, campo('Cédula o identificación', numero), buscar),
       campo('Tipo de identificación', tipo),
-      h('div', { class: 'fila doble' }, campo('Identificación', numero), buscar),
-      campo('Nombre', nombre), campo('Correo', correo), campo('Actividad económica', actividad)),
+      campo('Nombre', nombre), campo('Correo (ahí le llega la factura)', correo), campo('Actividad económica', actividad)),
     conUbicacion ? h('div', { class: 'campos' }, campo('Provincia', ubic.provincia), campo('Cantón', ubic.canton),
       campo('Distrito', ubic.distrito), campo('Otras señas', ubic.otras_senas)) : null,
     conCatalogo ? h('label', { class: 'check' }, guardarCliente, 'Guardar en mis clientes frecuentes') : null,
@@ -141,6 +159,7 @@ function bloquePersona(titulo, { conUbicacion = false, conCatalogo = false } = {
 
   return {
     seccion,
+    nota,
     // Guarda el receptor en el catálogo si se marcó la casilla (no bloquea la emisión)
     async guardarEnCatalogo() {
       if (!conCatalogo || !guardarCliente.checked || clienteId || !numero.value.trim()) return;
@@ -160,7 +179,7 @@ function bloquePersona(titulo, { conUbicacion = false, conCatalogo = false } = {
       return p;
     },
     actividad: () => actividad.value || null,
-    identificacion: () => numero.value.replace(/\D/g, ''),
+    identificacion: () => limpiarIdentificacion(numero.value),
     // Carga una persona guardada (proforma o preliminar) sin volver a consultar Hacienda
     fijar(p, codigoActividad = null) {
       if (!p) return;
@@ -184,12 +203,12 @@ function bloquePersona(titulo, { conUbicacion = false, conCatalogo = false } = {
 function crearLinea(alCambiar, alQuitar, { receptorId = () => null, exoneracion = () => null, descuentos = () => [] } = {}) {
   const c = {
     cabys: h('input', { type: 'text', maxlength: '13', placeholder: '13 dígitos', size: '14' }),
-    descripcion: h('input', { type: 'text', maxlength: '200' }),
+    descripcion: h('input', { type: 'text', maxlength: '200', placeholder: 'Qué vende' }),
     cantidad: h('input', { type: 'number', step: '0.001', min: '0', value: '1' }),
     unidad: h('select', {}, Object.entries(UNIDADES).map(([k, v]) => h('option', { value: k, title: v }, k))),
-    precio: h('input', { type: 'number', step: '0.01', min: '0' }),
+    precio: h('input', { type: 'number', step: '0.01', min: '0', placeholder: 'Sin IVA' }),
     descuento: h('input', { type: 'number', step: '0.01', min: '0', value: '0' }),
-    tarifa: h('select', {}, tarifasOpciones('08')),
+    tarifa: h('select', { class: 'tarifa' }, tarifasOpciones('08')),
     // opciones avanzadas
     codigoComercial: h('input', { type: 'text', maxlength: '20' }),
     codigoDescuento: h('select', {}, opciones(DESCUENTOS, '07')),
@@ -295,9 +314,10 @@ function crearLinea(alCambiar, alQuitar, { receptorId = () => null, exoneracion 
     const t = TARIFA_POR_PORCENTAJE[Number(item.impuesto)];
     if (t) c.tarifa.value = t;
     aplicarExoneracion(true);
-  }) }, '🔍');
+  }) }, 'Buscar');
 
   const extra = h('tr', { class: 'extra oculto' }, h('td', { colspan: '10' },
+    h('p', { class: 'suave' }, 'Opciones especiales de esta línea. Normalmente no hace falta tocarlas.'),
     h('div', { class: 'campos' },
       campo('Código comercial', c.codigoComercial), campo('Código de descuento', c.codigoDescuento),
       campo('Partida arancelaria (exportación)', c.partida), campo('IVA a nivel de fábrica', c.fabrica),
@@ -312,11 +332,13 @@ function crearLinea(alCambiar, alQuitar, { receptorId = () => null, exoneracion 
     exoInfo));
 
   const fila = h('tr', {},
+    h('td', {}, c.descripcion, infoProducto, estadoExo),
     h('td', {}, h('div', { class: 'fila' }, c.cabys, buscarCabys)),
-    h('td', {}, c.descripcion, infoProducto, estadoExo), h('td', {}, c.cantidad), h('td', {}, c.unidad), h('td', {}, c.precio),
-    h('td', {}, c.descuento), h('td', {}, c.tarifa), h('td', { class: 'num' }, total),
-    h('td', {}, h('button', { type: 'button', class: 'chico', title: 'Opciones', onclick: () => extra.classList.toggle('oculto') }, '⚙')),
-    h('td', {}, h('button', { type: 'button', class: 'chico peligro', title: 'Quitar', onclick: () => { fila.remove(); extra.remove(); alQuitar(linea); } }, '✕')));
+    h('td', {}, c.cantidad), h('td', {}, c.unidad), h('td', {}, c.precio),
+    h('td', {}, c.descuento), h('td', {}, c.tarifa), h('td', { class: 'num total-linea' }, total),
+    h('td', {}, h('div', { class: 'acciones-linea' },
+      h('button', { type: 'button', class: 'chico', title: 'Código comercial, exoneración de la línea, IVA especial…', onclick: () => extra.classList.toggle('oculto') }, 'Más'),
+      h('button', { type: 'button', class: 'chico peligro', title: 'Quitar esta línea', 'aria-label': 'Quitar línea', onclick: () => { fila.remove(); extra.remove(); alQuitar(linea); } }, '✕'))));
 
   // Descuento automático del producto del catálogo; se recalcula con la cantidad
   // y deja de aplicarse si el usuario digita otro descuento.
@@ -461,7 +483,7 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
   const tipo = h('select', {}, opciones(TIPOS_DOCUMENTO, TIPOS_DOCUMENTO[tipoInicial] ? tipoInicial : '01'));
   const sucursal = h('input', { type: 'number', min: '1', max: '999', value: '1' });
   const terminal = h('input', { type: 'number', min: '1', max: '99999', value: '1' });
-  const situacion = h('select', {}, Object.entries(SITUACIONES).map(([k, v]) => h('option', { value: k }, `${k} · ${v}`)));
+  const situacion = h('select', {}, Object.entries(SITUACIONES).map(([k, v]) => h('option', { value: k }, v)));
   const fechaEmision = h('input', { type: 'datetime-local' });
   const refExterna = h('input', { type: 'text', maxlength: '100', placeholder: 'Opcional: ID en su sistema' });
   const condicion = h('select', {}, opciones(CONDICIONES_VENTA, '01'));
@@ -470,10 +492,10 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
   const tipoCambio = h('input', { type: 'number', step: '0.00001', min: '0', placeholder: 'Automático' });
   const servicio10 = h('input', { type: 'checkbox' });
   const ivaDevuelto = h('input', { type: 'number', step: '0.01', min: '0', placeholder: 'Servicios de salud con tarjeta' });
-  const notas = h('textarea', { rows: '2', maxlength: '1000' });
+  const notas = h('textarea', { rows: '2', maxlength: '1000', placeholder: 'Aparece en el PDF de la factura' });
 
-  const receptor = bloquePersona('Cliente (receptor)', { conCatalogo: true });
-  const proveedor = bloquePersona('Proveedor (factura de compra)', { conUbicacion: true });
+  const receptor = bloquePersona('1. ¿A quién le factura?', { conCatalogo: true, alIdentificar: (id, vigente) => sugerirExoneraciones(id, vigente) });
+  const proveedor = bloquePersona('1. ¿A quién le compra?', { conUbicacion: true });
 
   // Exoneración del cliente para toda la factura: al escribir la autorización se
   // cargan de Hacienda los productos y servicios (CABYS) que cubre.
@@ -487,7 +509,7 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
     const aut = exoAut.value.trim().toUpperCase();
     if (!aut) { exoConsultada = ''; exoCliente = null; vaciar(exoInfo); vaciar(exoLista); reaplicarExo(); return; }
     if (!/^AL-\d{8}-\d{2}$/.test(aut)) {
-      if (forzar) vaciar(exoInfo, aviso('Formato: AL-XXXXXXXX-XX. Otros documentos de exoneración se indican en cada línea (⚙).', 'error'));
+      if (forzar) vaciar(exoInfo, aviso('Formato: AL-XXXXXXXX-XX. Otros documentos de exoneración se indican en cada línea (botón «Más»).', 'error'));
       return;
     }
     if (!forzar && aut === exoConsultada) return;
@@ -551,22 +573,64 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
     if (!v || /^AL-\d{8}-\d{2}$/i.test(v)) consultarExoCliente();
   });
   exoAut.addEventListener('change', () => consultarExoCliente());
-  const revalidarExo = h('button', { type: 'button', onclick: () => conBoton(revalidarExo, () => consultarExoCliente(true)) }, 'Volver a consultar');
-  const seccionExo = h('section', { class: 'tarjeta' },
-    h('h2', {}, 'Exoneración del cliente (opcional)'),
+  const revalidarExo = h('button', { type: 'button', onclick: () => conBoton(revalidarExo, () => consultarExoCliente(true)) }, 'Consultar en Hacienda');
+  // Exoneraciones vigentes ya conocidas de esta cédula: se ofrecen para aplicarlas con un clic
+  const exoSugeridas = h('div');
+  const sugerirExoneraciones = async (id, vigente) => {
+    vaciar(exoSugeridas);
+    let lista;
+    try {
+      lista = (await api(`/hacienda/exoneraciones?identificacion=${encodeURIComponent(id)}`)).filter((x) => x.vigente);
+    } catch { return; /* la sugerencia es opcional */ }
+    if (!vigente() || !lista.length) return;
+    vaciar(exoSugeridas, aviso([
+      `Este cliente tiene ${lista.length === 1 ? 'una exoneración vigente' : `${lista.length} exoneraciones vigentes`}: `,
+      lista.map((x) => h('button', { type: 'button', class: 'chico', onclick: () => { exoAut.value = x.autorizacion; consultarExoCliente(); } },
+        `Usar ${x.autorizacion} (${x.porcentaje ?? '?'}%)`)),
+    ], 'info'));
+    seccionExo.open = true;
+  };
+  // Plegada: la mayoría de clientes no tiene exoneración
+  const seccionExo = h('details', { class: 'opcional' },
+    h('summary', {}, '¿El cliente tiene exoneración de impuestos?'),
+    exoSugeridas,
+    h('p', { class: 'suave' }, 'Digite el número de autorización (AL-…). Se valida en Hacienda y se aplica sola a los productos que cubre.'),
     h('div', { class: 'fila' }, campo('Número de autorización', exoAut), revalidarExo),
     exoInfo, exoLista);
+  receptor.seccion.append(seccionExo);
 
   const ref = {
     tipo: h('select', {}, opciones(TIPOS_DOC_REFERENCIA, '01')),
-    numero: h('input', { type: 'text', maxlength: '50', placeholder: 'Clave de 50 dígitos' }),
+    tipoOtro: h('input', { type: 'text', maxlength: '100', placeholder: 'Describa el documento (mínimo 5 letras)' }),
+    numero: h('input', { type: 'text', maxlength: '50', placeholder: 'Clave de 50 caracteres' }),
     fecha: h('input', { type: 'datetime-local' }),
-    codigo: h('select', {}, opciones(CODIGOS_REFERENCIA, '01')),
+    codigo: h('select', {}),
+    codigoOtro: h('input', { type: 'text', maxlength: '100', placeholder: 'Describa el motivo (mínimo 5 letras)' }),
     razon: h('input', { type: 'text', maxlength: '180' }),
   };
-  const seccionRef = h('section', { class: 'tarjeta' }, h('h2', {}, 'Documento de referencia'),
-    h('div', { class: 'campos' }, campo('Tipo', ref.tipo), campo('Número / clave', ref.numero),
-      campo('Fecha', ref.fecha), campo('Código', ref.codigo), campo('Razón', ref.razon)));
+  // Códigos de la nota 9 que admite el documento que se emite, con la explicación de su efecto contable
+  const efectoCodigo = h('p', { class: 'suave' });
+  const campoCodigoOtro = campo('¿Cuál otro motivo?', ref.codigoOtro);
+  const campoTipoOtro = campo('¿Qué documento?', ref.tipoOtro);
+  const actualizarCodigos = (t) => {
+    const permitidos = CODIGOS_POR_TIPO[t] || CODIGOS_POR_TIPO.otros;
+    const actual = permitidos.includes(ref.codigo.value) ? ref.codigo.value : permitidos[0];
+    vaciar(ref.codigo, permitidos.map((c) => h('option', { value: c, selected: c === actual, title: `Código ${c}` }, CODIGOS_REFERENCIA[c])));
+    mostrarEfecto();
+  };
+  const mostrarEfecto = () => {
+    efectoCodigo.textContent = EFECTO_CODIGO[ref.codigo.value] || '';
+    campoCodigoOtro.classList.toggle('oculto', ref.codigo.value !== '99');
+    campoTipoOtro.classList.toggle('oculto', ref.tipo.value !== '99');
+  };
+  ref.codigo.addEventListener('change', mostrarEfecto);
+  ref.tipo.addEventListener('change', mostrarEfecto);
+  const refTitulo = h('h2', {}, 'Documento de referencia');
+  const refAyuda = h('p', { class: 'suave ayuda-seccion' });
+  const seccionRef = h('section', { class: 'tarjeta destacada' }, refTitulo, refAyuda,
+    h('div', { class: 'campos' }, campo('Clave del documento (50 caracteres)', ref.numero), campo('Fecha del documento', ref.fecha),
+      campo('¿Qué se hace?', ref.codigo), campoCodigoOtro, campo('Motivo', ref.razon), campo('Tipo de documento', ref.tipo), campoTipoOtro),
+    efectoCodigo);
 
   // Medios de pago
   const medios = h('div', { class: 'campos' });
@@ -574,7 +638,7 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
   const agregarMedio = () => {
     if (medioFilas.length >= 4) return;
     const t = h('select', {}, opciones(MEDIOS_PAGO, medioFilas.length ? '02' : '01'));
-    const m = h('input', { type: 'number', step: '0.01', min: '0', placeholder: 'Monto (si hay varios)' });
+    const m = h('input', { type: 'number', step: '0.01', min: '0', placeholder: 'Monto (si son varias formas)' });
     medioFilas.push({ t, m });
     medios.append(h('div', { class: 'fila' }, t, m));
   };
@@ -584,6 +648,7 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
   const cuerpoLineas = h('tbody');
   const lineas = [];
   const resumen = h('table', { class: 'totales' });
+  const totalBarra = h('strong', {}, dinero(0));
 
   // Tarifa reducida 1%: si son insumos agropecuarios o de pesca, el cliente debe estar
   // registrado en el MAG o INCOPESCA. Se consulta solo si el usuario lo pide.
@@ -615,6 +680,7 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
       cargo ? h('tr', {}, h('td', {}, 'Servicio 10%'), h('td', { class: 'num' }, dinero(cargo, mon))) : null,
       dev ? h('tr', {}, h('td', {}, 'IVA devuelto'), h('td', { class: 'num' }, dinero(-dev, mon))) : null,
       h('tr', { class: 'total' }, h('td', {}, 'Total estimado'), h('td', { class: 'num' }, dinero(sub + iva + cargo - dev, mon)))));
+    totalBarra.textContent = dinero(sub + iva + cargo - dev, mon);
   };
   const agregarLinea = () => {
     const l = crearLinea(recalcular, (x) => { lineas.splice(lineas.indexOf(x), 1); recalcular(); },
@@ -640,10 +706,14 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
   };
   moneda.addEventListener('change', () => cargarTc().catch((e) => toast(e.message, 'error')));
   const consultarTc = h('button', { type: 'button', onclick: () => conBoton(consultarTc, cargarTc) }, 'Actualizar');
+  const campoTc = h('div', { class: 'fila' }, campo('Tipo de cambio', tipoCambio), consultarTc);
 
   const campoFecha = campo('Fecha real de la venta', fechaEmision);
-  const campoPlazo = campo('Plazo de crédito', plazo);
-  const campoDevuelto = campo('IVA devuelto', ivaDevuelto);
+  const campoPlazo = campo('Plazo de crédito (días)', plazo);
+  const campoDevuelto = campo('IVA devuelto (servicios de salud con tarjeta)', ivaDevuelto);
+  const ayudaTipo = h('p', { class: 'suave ayuda-tipo' });
+  const TITULO_DETALLE = { '03': '2. ¿Qué se devuelve o rebaja?', '02': '2. ¿Qué se cobra de más?', '08': '2. ¿Qué compra?' };
+  const tituloDetalle = h('h2', {}, '2. ¿Qué vende?');
   const mensaje = h('div');
 
   const actualizarVisibilidad = () => {
@@ -655,10 +725,36 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
     campoFecha.classList.toggle('oculto', situacion.value === '1');
     campoPlazo.classList.toggle('oculto', !['02', '08', '10'].includes(condicion.value));
     campoDevuelto.classList.toggle('oculto', !['01', '04'].includes(t));
-    if (situacion.value === '2') { ref.tipo.value = '08'; ref.codigo.value = '05'; }
-    if (t === '08') { ref.tipo.value = ref.tipo.value === '01' ? '14' : ref.tipo.value; ref.codigo.value = '04'; }
+    campoTc.classList.toggle('oculto', moneda.value === 'CRC');
+    ayudaTipo.textContent = esProforma ? 'No se envía a Hacienda: se guarda para convertirla en factura después.' : (AYUDA_TIPO[t] || '');
+    receptor.nota.textContent = t === '04'
+      ? 'Opcional en el tiquete. Si el cliente pide factura a su nombre, escriba su cédula y se emite factura electrónica.'
+      : 'Escriba la identificación: el nombre y la actividad se llenan solos con los datos de Hacienda.';
+    tituloDetalle.textContent = TITULO_DETALLE[t] || '2. ¿Qué vende?';
+    if (['02', '03'].includes(t)) {
+      refTitulo.textContent = 'Factura que va a corregir';
+      refAyuda.textContent = t === '03'
+        ? 'Copie la clave de 50 dígitos de la factura original. Para anular una factura completa es más fácil: ábrala en Documentos emitidos y use «Anular con nota de crédito».'
+        : 'Copie la clave de 50 dígitos de la factura original (está en Documentos emitidos, en el detalle de la factura).';
+    } else if (situacion.value === '2') {
+      refTitulo.textContent = 'Comprobante provisional que sustituye';
+      refAyuda.textContent = 'Datos del comprobante en papel que se entregó mientras no había sistema.';
+    } else {
+      refTitulo.textContent = 'Documento de referencia';
+      refAyuda.textContent = '';
+    }
+    if (situacion.value !== '1') masOpciones.open = true;
+    actualizarCodigos(t);
+    if (situacion.value === '2') { ref.tipo.value = '08'; ref.codigo.value = '05'; mostrarEfecto(); }
+    if (t === '08') { ref.tipo.value = ref.tipo.value === '01' ? '14' : ref.tipo.value; ref.codigo.value = '04'; mostrarEfecto(); }
   };
-  [tipo, situacion, condicion].forEach((el) => el.addEventListener('change', actualizarVisibilidad));
+  const masOpciones = h('details', { class: 'tarjeta opcional' },
+    h('summary', {}, 'Más opciones: sucursal, terminal, venta sin internet (contingencia), referencia interna'),
+    h('div', { class: 'campos' }, campo('Tipo de documento', tipo), campo('Sucursal', sucursal), campo('Terminal (caja)', terminal),
+      campo('Situación', situacion), campoFecha, campo('Referencia interna', refExterna), campoDevuelto));
+  const borrador = modo.borrador || null;
+  const esProforma = modo.proforma || borrador?.clase === 'proforma';
+  [tipo, situacion, condicion, moneda].forEach((el) => el.addEventListener('change', actualizarVisibilidad));
   actualizarVisibilidad();
 
   // Cuerpo de POST /facturas con lo digitado (también es lo que se guarda en proformas y preliminares)
@@ -688,6 +784,8 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
       datos.referencia = {
         tipo_documento: ref.tipo.value, numero: ref.numero.value.trim() || null,
         fecha_emision: ref.fecha.value ? `${ref.fecha.value}:00` : null, codigo: ref.codigo.value, razon: ref.razon.value.trim() || null,
+        codigo_otro: ref.codigo.value === '99' ? ref.codigoOtro.value.trim() || null : null,
+        tipo_documento_otro: ref.tipo.value === '99' ? ref.tipoOtro.value.trim() || null : null,
       };
     }
     return datos;
@@ -728,13 +826,16 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
       ref.fecha.value = String(d.referencia.fecha_emision || '').slice(0, 16);
       ref.codigo.value = d.referencia.codigo || ref.codigo.value;
       ref.razon.value = d.referencia.razon || '';
+      ref.codigoOtro.value = d.referencia.codigo_otro || '';
+      ref.tipoOtro.value = d.referencia.tipo_documento_otro || '';
+      mostrarEfecto();
     }
+    if (exoAut.value) seccionExo.open = true;
+    if (Number(sucursal.value) !== 1 || Number(terminal.value) !== 1 || refExterna.value || ivaDevuelto.value) masOpciones.open = true;
     actualizarVisibilidad();
     recalcular();
   };
 
-  const borrador = modo.borrador || null;
-  const esProforma = modo.proforma || borrador?.clase === 'proforma';
   if (borrador) cargarDatos(borrador.datos);
 
   const mostrarError = (err) => {
@@ -795,37 +896,34 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
       }
     });
   } },
-  h('section', { class: 'tarjeta' }, h('h2', {}, 'Comprobante'),
-    h('div', { class: 'campos' },
-      campo('Tipo', tipo), campo('Sucursal', sucursal), campo('Terminal', terminal),
-      campo('Situación', situacion), campoFecha, campo('Referencia interna', refExterna))),
+  seccionRef,
   receptor.seccion,
-  seccionExo,
   proveedor.seccion,
-  h('section', { class: 'tarjeta' }, h('h2', {}, 'Detalle'),
+  h('section', { class: 'tarjeta' }, tituloDetalle,
+    h('p', { class: 'suave ayuda-seccion' }, 'Agregue productos de su lista o escriba la línea. Si no sabe el código CABYS, use «Buscar».'),
     h('div', { class: 'tabla' }, h('table', { class: 'lineas' },
-      h('thead', {}, h('tr', {}, ['CABYS', 'Descripción', 'Cantidad', 'Unidad', 'Precio unit.', 'Descuento', 'IVA', 'Total', '', '']
+      h('thead', {}, h('tr', {}, ['Producto o servicio', 'Código CABYS', 'Cantidad', 'Unidad', 'Precio sin IVA', 'Descuento (monto)', 'IVA', 'Total', '']
         .map((t) => h('th', {}, t)))),
       cuerpoLineas)),
     h('div', { class: 'acciones' },
-      h('button', { type: 'button', class: 'primario', onclick: agregarDelCatalogo }, '+ Del catálogo'),
-      h('button', { type: 'button', onclick: () => agregarLinea() }, '+ Línea manual'),
-      h('label', { class: 'check' }, servicio10, 'Cobrar impuesto de servicio 10% (restaurantes)')),
+      h('button', { type: 'button', class: 'primario', onclick: agregarDelCatalogo }, '+ Agregar de mis productos'),
+      h('button', { type: 'button', onclick: () => agregarLinea() }, '+ Escribir otra línea'),
+      h('label', { class: 'check' }, servicio10, 'Cobrar 10% de servicio (restaurantes)')),
     avisoAgro),
   h('div', { class: 'campos dos' },
-    h('section', { class: 'tarjeta' }, h('h2', {}, 'Condiciones y pago'),
+    h('section', { class: 'tarjeta' }, h('h2', {}, '3. ¿Cómo le pagan?'),
       h('div', { class: 'campos' },
-        campo('Condición de venta', condicion), campoPlazo,
-        campo('Moneda', moneda), h('div', { class: 'fila' }, campo('Tipo de cambio', tipoCambio), consultarTc),
-        campoDevuelto),
-      h('h3', {}, 'Medios de pago'), medios,
-      h('button', { type: 'button', class: 'chico', onclick: agregarMedio }, '+ Otro medio de pago'),
-      campo('Notas', notas)),
+        campo('Condición de venta', condicion), campoPlazo, campo('Moneda', moneda), campoTc),
+      h('h3', {}, 'Forma de pago'), medios,
+      h('button', { type: 'button', class: 'chico', onclick: agregarMedio }, '+ Pagó con dos o más formas'),
+      campo('Nota para el cliente (opcional)', notas)),
     h('section', { class: 'tarjeta' }, h('h2', {}, 'Resumen'), resumen,
       h('p', { class: 'suave' }, 'Estimado; el cálculo oficial lo hace el sistema al firmar.'))),
-  seccionRef,
+  masOpciones,
   mensaje,
-  h('div', { class: 'acciones' }, botonesGuardar(), emitir));
+  h('div', { class: 'barra-emitir' },
+    h('div', { class: 'total-barra' }, h('span', { class: 'suave' }, 'Total'), totalBarra),
+    h('div', { class: 'acciones' }, botonesGuardar(), emitir)));
 
   function botonesGuardar() {
     if (esProforma && !borrador) {
@@ -850,8 +948,8 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
   tipo.addEventListener('change', () => { titulo.textContent = nombreDocumento(); });
   const volver = borrador ? h('a', { href: borrador.clase === 'proforma' ? '#/proformas' : '#/preliminares' },
     borrador.clase === 'proforma' ? '← Proformas' : '← Documentos preliminares') : null;
-  vaciar(cont, h('div', { class: 'encabezado' }, h('div', {}, volver, titulo),
-    h('a', { href: '#/factura-rapida', class: 'boton' }, 'Factura rápida')),
+  vaciar(cont, h('div', { class: 'encabezado' }, h('div', {}, volver, titulo, ayudaTipo),
+    h('a', { href: '#/factura-rapida', class: 'boton', title: 'Para ventas de contado sin tantos datos' }, 'Cambiar a factura rápida')),
     borrador?.errores ? aviso(`Falta para emitirlo:\n${borrador.errores}`, 'alerta') : null,
     form);
 }

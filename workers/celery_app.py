@@ -1,3 +1,10 @@
+"""
+Configuración de Celery: el worker procesa en segundo plano los envíos a
+Hacienda, las consultas de estado, los correos y los webhooks; beat programa
+las tareas periódicas (reintentos, consulta de enviados, buzones de correo,
+paquetes y suscripciones por vencer, certificados y datos públicos de
+Hacienda). Las tareas están en workers/tasks.py.
+"""
 from celery import Celery
 from celery.schedules import crontab
 from config.settings import get_settings

@@ -54,11 +54,11 @@ def test_sin_contratar_no_funciona(control, clientes):
     r = sistema.post("/api/v1/facturas", json=factura_payload())
     assert r.status_code == 403 and "no tiene contratado" in r.json()["detail"]
     r = panel.post("/api/v1/facturas", json=factura_payload())
-    assert r.status_code == 403 and "facturación en línea" in r.json()["detail"]
+    assert r.status_code == 403 and "panel web" in r.json()["detail"]
     assert panel.get("/api/v1/auth/yo").json()["empresas"][0]["facturacion_web"] is False
-    # Sigue viendo sus comprobantes y su saldo en el panel
-    assert panel.get("/api/v1/facturas").status_code == 200
-    assert panel.get("/api/v1/saldo").status_code == 200
+    # El panel web es un servicio adicional: sin él no hay acceso a los datos desde el panel
+    assert panel.get("/api/v1/facturas").status_code == 403
+    assert panel.get("/api/v1/saldo").status_code == 403
 
 
 def test_cada_servicio_se_cobra_por_separado(control, clientes, admin, emisor):
