@@ -36,8 +36,8 @@ Un documento **rechazado por Hacienda sí consume** (se firmó y se procesó).
 - `GET /saldo` → disponible, consumo del mes, paquetes y vencimientos.
 - `GET /saldo/movimientos?desde=2026-09-01&hasta=2026-09-30` → cada documento que consumió saldo.
 - Sin saldo, la emisión responde **`402 Payment Required`**. Adquiera un paquete con su proveedor.
-- Además de los documentos, la llave requiere el servicio **Conexión por API** vigente; si no está
-  contratado o venció responde **`403`** con el motivo ("no tiene contratado el servicio…").
+- La conexión por API no tiene mensualidad: se paga solo con documentos. Si su proveedor la
+  suspende, la llave responde **`403`** con el motivo.
 - Los paquetes pueden tener fecha de vencimiento; se consume primero el que vence antes.
 
 ## 3. Emitir un comprobante
@@ -58,7 +58,7 @@ Content-Type: application/json
   },
   "productos": [
     {
-      "codigo_cabys": "8314100000000", "descripcion": "Consultoría",
+      "codigo_cabys": "8312900000000", "descripcion": "Consultoría",
       "cantidad": "1", "unidad_medida": "Sp", "precio_unitario": "50000",
       "codigo_tarifa_iva": "08"
     }
@@ -149,7 +149,7 @@ existencia y, si no alcanza, la emisión se rechaza con `422`.
 | Kárdex y existencias | `GET /inventario/movimientos?producto_id=` · `GET /inventario/resumen` · `GET /inventario/existencias.csv` |
 
 ```json
-{"codigo_cabys": "4299900000000", "descripcion": "Martillo de uña 16 oz", "cantidad": "3",
+{"codigo_cabys": "4292199990200", "descripcion": "Martillo de uña 16 oz", "cantidad": "3",
  "precio_unitario": "5000", "codigo_tarifa_iva": "08", "producto_id": "<id del catálogo>"}
 ```
 
@@ -170,7 +170,7 @@ de la venta (máximo 30 días atrás).
 | `400` | Falta un header (p. ej. `X-Emisor-Id` con llaves de administrador) | Corregir la solicitud |
 | `401` | API key inválida o revocada | Verificar la llave |
 | `402` | **Saldo de documentos agotado** | Comprar un paquete; luego reintentar |
-| `403` | La llave no tiene permiso sobre ese recurso, o el servicio Conexión por API no está contratado o venció | Leer `detail`; renovar con su proveedor |
+| `403` | La llave no tiene permiso sobre ese recurso, o la conexión por API está suspendida | Leer `detail`; contactar a su proveedor |
 | `404` | Documento no encontrado (o de otra empresa) | — |
 | `409` | Operación no permitida en el estado actual (p. ej. anular algo no aceptado) o empresa sin certificado | Revisar el mensaje |
 | `422` | Datos inválidos; `detail` indica el campo y el motivo | Corregir los datos (no consume saldo) |

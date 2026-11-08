@@ -68,15 +68,12 @@ Cada empresa compra **paquetes de documentos**; cada documento firmado y
 enviado a Hacienda (comprobantes, recibos de pago y mensajes receptor)
 descuenta 1. Sin saldo la emisión responde `402`.
 
-Para que la llave de una empresa funcione hacen falta dos cosas (con
-`CONTROL_SALDO` y `CONTROL_SUSCRIPCIONES` activos, que es lo predeterminado):
+Modelo de cobro:
 
-| Requisito | Si falta | Cómo se activa |
+| Cliente | Qué paga | Si falta |
 |---|---|---|
-| Servicio **Conexión por API** vigente (mensualidad o regalía) | `403` "no tiene contratado el servicio" | `POST /api/v1/emisores/{id}/suscripciones` `{"servicio": "api", "meses": 1, "precio": ...}` o `"regalia": true` |
-| **Documentos** disponibles | `402` "Saldo de documentos agotado" | `POST /api/v1/emisores/{id}/paquetes` |
-
-El **panel web** es un servicio aparte y opcional (`"servicio": "facturacion_web"`).
+| Se conecta **por API** (POS, ERP, n8n) | **Solo documentos** (`POST /api/v1/emisores/{id}/paquetes`). La casilla *Conexión por API* debe estar marcada | Sin saldo: `402`. Casilla desmarcada: `403` |
+| Usa el **sistema en línea** (panel web) | Documentos **más** la mensualidad del panel web (`POST /api/v1/emisores/{id}/suscripciones` con `"servicio": "facturacion_web"`, o `"regalia": true`) | Sin mensualidad vigente sus usuarios no entran al panel |
 - **Planes y ventas** (panel) o `POST /api/v1/planes`: catálogo con cantidad, precio y vigencia.
 - **Empresas → Vender paquete** (panel) o `POST /api/v1/emisores/{id}/paquetes`
   (`plan_id` o `documentos`/`precio`, `referencia_pago`): se registra tras confirmar el pago (SINPE, transferencia).
@@ -117,8 +114,7 @@ curl -X PUT localhost:8000/api/v1/emisores/$ID/credenciales-hacienda -H "$H" -H 
 curl -X POST localhost:8000/api/v1/emisores/$ID/probar-conexion -H "$H"
 # 4) Llave para el sistema de facturación de esa empresa (se muestra una sola vez)
 curl -X POST localhost:8000/api/v1/api-keys -H "$H" -H "Content-Type: application/json" -d '{"nombre": "POS", "emisor_id": "'$ID'"}'
-# 5) Cobrar antes de que facture: servicio API y paquete de documentos (sin esto: 403 / 402)
-curl -X POST localhost:8000/api/v1/emisores/$ID/suscripciones -H "$H" -H "Content-Type: application/json"      -d '{"servicio": "api", "meses": 1, "precio": "10000", "referencia_pago": "SINPE 12345"}'
+# 5) Cobrar antes de que facture: paquete de documentos (sin saldo responde 402)
 curl -X POST localhost:8000/api/v1/emisores/$ID/paquetes -H "$H" -H "Content-Type: application/json"      -d '{"documentos": 500, "precio": "15000", "referencia_pago": "SINPE 12345"}'
 ```
 Con la llave de administrador se puede operar sobre cualquier empresa
@@ -151,7 +147,7 @@ Recorrido de una factura: `POST /api/v1/facturas` → `routes/facturas.py` → `
 curl -X POST localhost:8000/api/v1/facturas -H "X-API-Key: $LLAVE" -H "Content-Type: application/json" -d '{
   "tipo_documento": "01", "sucursal": 1, "terminal": 1, "referencia_externa": "POS1-000123",
   "receptor": {"nombre": "Juan Pérez", "tipo_identificacion": "01", "numero_identificacion": "112345678", "correo": "juan@example.com"},
-  "productos": [{"codigo_cabys": "8314100000000", "descripcion": "Consultoría", "cantidad": 1,
+  "productos": [{"codigo_cabys": "8312900000000", "descripcion": "Consultoría", "cantidad": 1,
                  "unidad_medida": "Sp", "precio_unitario": 50000, "codigo_tarifa_iva": "08"}],
   "medios_pago": [{"tipo": "06"}]}'
 ```

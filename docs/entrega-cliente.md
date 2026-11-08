@@ -1,25 +1,26 @@
 # Qué entregarle a cada cliente
 
-Hay dos servicios y se venden por separado. Cada uno se activa en
-**Empresas → ficha → Datos de la empresa**:
+Hay dos formas de trabajar y cada una se activa en
+**Empresas → ficha → Datos**:
 
 | Servicio | Casilla | Para quién |
 |---|---|---|
 | **Conexión por API** | *Conexión por API (su sistema de facturación)* | Ya tiene un sistema (POS, ERP, sistema a la medida) y quiere que ese sistema facture electrónicamente. |
-| **Facturación en línea** | *Facturación en línea (panel…)* | No tiene sistema: factura desde el navegador, con clientes, productos e inventario. |
+| **Panel web (sistema en línea)** | *Panel web para los usuarios de la empresa* | No tiene sistema: factura desde el navegador, con clientes, productos e inventario. |
 
 Puede activar uno, el otro o los dos. Los documentos (saldo) se descuentan
 igual sin importar por dónde se emitan.
 
-## Qué se cobra (todo por aparte)
+## Qué se cobra
 
-| Cobro | Dónde se registra | Qué pasa si no paga |
-|---|---|---|
-| **Documentos** (paquetes) | Ficha → *Documentos (saldo)* → **+ Vender paquete** | Al agotarse no puede emitir (`402`) |
-| **Mensualidad de conexión por API** | Ficha → *Servicios alquilados* → **Cobrar / Renovar** | Al vencer (más los días de gracia) sus llaves dejan de funcionar |
-| **Mensualidad de facturación en línea** | Ficha → *Servicios alquilados* → **Cobrar / Renovar** | Al vencer (más los días de gracia) deja de ver Nuevo comprobante, Clientes, Productos e Inventario |
+| Cobro | A quién | Dónde se registra | Qué pasa si no paga |
+|---|---|---|---|
+| **Documentos** (paquetes) | A todos | Ficha → *Compras* → **+ Vender paquete** | Al agotarse no puede emitir (`402`) |
+| **Mensualidad del panel web** | Solo a quien usa el sistema en línea (es un servicio más) | Ficha → *Compras* → **Cobrar panel web** | Al vencer (más los días de gracia) sus usuarios no entran al panel |
 
-- La mensualidad se cobra por 1, 3, 6 o 12 meses con el precio que usted
+La **conexión por API se paga solo con documentos**: no tiene mensualidad.
+
+- La mensualidad del panel web se cobra por 1, 3, 6 o 12 meses con el precio que usted
   defina (0 = cortesía). Si renueva antes de vencer, el período nuevo empieza
   cuando termina el actual: no pierde días.
 - El cliente recibe un aviso por correo (y webhook) `DIAS_ALERTA_SUSCRIPCION`
@@ -27,9 +28,8 @@ igual sin importar por dónde se emitan.
   días de gracia antes del corte.
 - En *Planes y ventas* ve los ingresos del mes separados: documentos y servicios.
 - Cada cobro o anulación queda en la *Bitácora*.
-- Si prefiere no cobrar mensualidad (solo documentos), ponga
-  `CONTROL_SUSCRIPCIONES=false` en `.env`: los servicios quedan controlados
-  solo por las casillas.
+- Si prefiere no cobrar la mensualidad del panel web, ponga
+  `CONTROL_SUSCRIPCIONES=false` en `.env`: el panel queda controlado solo por su casilla.
 
 > **Importante para la conexión por API:** el API no se "instala" en el
 > sistema del cliente. El **programador o proveedor del sistema del cliente**
@@ -39,7 +39,7 @@ igual sin importar por dónde se emitan.
 
 Antes de entregar cualquiera de los dos, la empresa debe estar lista: creada,
 con certificado, credenciales de Hacienda, *Probar conexión* en ok, con
-paquete de documentos **y con la mensualidad del servicio cobrada** (ver el
+paquete de documentos **y, si usa el panel web, con su mensualidad cobrada** (ver el
 [manual del administrador](manual-administrador.md)).
 
 ---
@@ -114,10 +114,10 @@ paquete de documentos **y con la mensualidad del servicio cobrada** (ver el
 
 ---
 
-## Si deja de pagar un servicio
+## Si deja de pagar
 
-Si no renueva la mensualidad, el servicio **se corta solo** al terminar los
-días de gracia. Para cortarlo de inmediato (o suspenderlo aunque esté pagado),
+Si no renueva la mensualidad del panel web, el panel **se corta solo** al terminar
+los días de gracia (su conexión por API sigue funcionando mientras tenga documentos). Para cortarlo de inmediato (o suspenderlo aunque esté pagado),
 desmarque la casilla correspondiente y **Guardar cambios**:
 
 - **Conexión por API desactivada:** las llaves de esa empresa reciben

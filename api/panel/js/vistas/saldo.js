@@ -34,7 +34,8 @@ export function tablaServicios(servicios, accion) {
   return tabla([
     { titulo: 'Servicio', valor: (s) => s.nombre },
     { titulo: 'Estado', valor: badgeServicio },
-    { titulo: 'Pagado hasta', valor: (s) => (s.regalia ? 'Regalía (no vence)' : s.vence ? fecha(s.vence, false) : '—') },
+    { titulo: 'Pagado hasta', valor: (s) => (!s.con_mensualidad ? 'Sin mensualidad: se paga con documentos'
+      : s.regalia ? 'Regalía (no vence)' : s.vence ? fecha(s.vence, false) : '—') },
     accion ? { titulo: '', valor: accion } : null,
   ].filter(Boolean), servicios);
 }
@@ -53,7 +54,7 @@ export async function vistaSaldo(cont) {
   const [r, movs] = await Promise.all([api('/saldo'), api('/saldo/movimientos?limit=200')]);
   const servicios = r.control_suscripciones ? h('section', { class: 'tarjeta' }, h('h2', {}, 'Servicios contratados'),
     tablaServicios(r.servicios.filter((s) => s.habilitado || s.vence)),
-    h('p', { class: 'suave' }, 'La mensualidad del servicio se paga aparte de los documentos. Para renovar, contacte a su proveedor.')) : null;
+    h('p', { class: 'suave' }, 'La conexión por API se paga solo con documentos. El panel web tiene su propia mensualidad; para renovarla, contacte a su proveedor.')) : null;
   if (!r.control_activo) {
     vaciar(cont, h('h1', {}, 'Mi saldo'), aviso('El control de saldo está desactivado: la facturación no tiene límite.', 'info'), servicios);
     return;

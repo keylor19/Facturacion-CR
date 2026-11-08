@@ -166,7 +166,7 @@ def emisor_actual(
 
     if not emisor.activo:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "El emisor está inactivo")
-    # Llave de una empresa: requiere el servicio de conexión por API (habilitado y pagado)
+    # Llave de una empresa: requiere la conexión por API habilitada (se paga con documentos, sin mensualidad)
     if principal.api_key_id and not principal.es_admin and not suscripciones.activo(db, emisor, "api"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, suscripciones.motivo_inactivo(db, emisor, "api"))
     # Usuario del panel de una empresa: el panel web es un servicio adicional (pagado o en regalía)

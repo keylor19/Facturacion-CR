@@ -13,7 +13,7 @@ from api.models.schemas import (
     UsuarioCrear, UsuarioResponse,
 )
 from api.security import Principal, autenticar, require_admin
-from api.services import auditoria, dos_pasos, limites, saldo, suscripciones, usuarios
+from api.services import administracion, auditoria, dos_pasos, limites, saldo, suscripciones, usuarios
 from config.settings import get_settings
 
 router = APIRouter(prefix="/api/v1", tags=["usuarios y sesiones"])
@@ -34,6 +34,15 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
         raise HTTPException(status_code=401, detail=str(exc))
     auditoria.registrar(db, "login", actor=f"usuario:{sesion.usuario.email}", request=request)
     return LoginResponse(token=token, expira=sesion.expira, usuario=usuarios.a_respuesta(sesion.usuario))
+
+
+@router.get("/auth/contacto")
+def contacto_ventas(db: Session = Depends(get_db)):
+    """
+    Público: el contacto de ventas configurado en Ventas → Facturación y avisos.
+    La pantalla de ingreso lo muestra a quien quiere solicitar el sistema.
+    """
+    return {"contacto": (administracion.ajustes(db).contacto_ventas or "").strip() or None}
 
 
 @router.post("/auth/logout", status_code=204)

@@ -1093,7 +1093,8 @@ class BorradorResponse(BaseModel):
 
 class SuscripcionRequest(BaseModel):
     """Cobro del alquiler de un servicio por N meses (aparte de los documentos)."""
-    servicio: Literal["api", "facturacion_web"] = Field(description="api = conexión por API, facturacion_web = panel web")
+    # Solo el panel web tiene mensualidad: la conexión por API se paga con documentos
+    servicio: Literal["facturacion_web"] = Field(description="facturacion_web = panel web (sistema en línea)")
     meses: int = Field(default=1, ge=1, le=36)
     precio: Decimal = Field(default=Decimal("0"), ge=0, max_digits=18, decimal_places=2,
                             description="Total cobrado por el período (0 = cortesía)")

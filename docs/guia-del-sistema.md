@@ -13,16 +13,16 @@ cómo se entra, cómo fluye una factura de punta a punta y cómo se opera.
 Una plataforma que **emite y recibe comprobantes electrónicos ante el
 Ministerio de Hacienda de Costa Rica (versión 4.4)** para **muchas empresas a
 la vez**, pensada para venderse a **contadores**: cada empresa compra
-**paquetes de documentos** y, opcionalmente, alquila el servicio de
-**conexión por API** o de **facturación en línea** (panel web).
+**paquetes de documentos**. Quien se conecta por API paga **solo documentos**;
+quien usa el **sistema en línea** (panel web) paga además su mensualidad.
 
 ### El modelo de negocio
 
 | Se cobra | Cómo funciona | Qué pasa si no paga |
 |---|---|---|
 | **Documentos** (paquetes) | Cada factura, tiquete, nota, recibo de pago o respuesta a un proveedor descuenta **1**. | Sin saldo no puede emitir (error `402`). |
-| **Mensualidad conexión por API** | Para empresas que ya tienen un sistema (POS, ERP) y lo conectan. | Al vencer (+ días de gracia) sus llaves dejan de funcionar. |
-| **Mensualidad facturación en línea** | Para empresas sin sistema: facturan desde el navegador. | Al vencer dejan de ver *Nuevo comprobante, Clientes, Productos, Inventario*. |
+| **Conexión por API** | Para empresas que ya tienen un sistema (POS, ERP, n8n). **Sin mensualidad**: se paga con documentos. | Si se desactiva su casilla, sus llaves responden `403`. |
+| **Mensualidad del panel web** | Para empresas sin sistema: facturan desde el navegador. Es un servicio adicional. | Al vencer (+ días de gracia) sus usuarios no entran al panel. |
 
 Reglas del cobro:
 - Se cobra en la **misma operación** que crea el documento: si la emisión falla antes de firmarse, **no se cobra**.

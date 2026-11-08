@@ -1,9 +1,13 @@
 """
-Alquiler de servicios por período (mensualidades), aparte de los documentos.
+Servicios de cada empresa y su mensualidad, aparte de los documentos.
 
-Un servicio funciona si está habilitado en la empresa (casilla en su ficha) y,
-cuando CONTROL_SUSCRIPCIONES está activo, si tiene una suscripción vigente
-(se toleran DIAS_GRACIA_SUSCRIPCION días después del vencimiento).
+Modelo de cobro:
+  - Conexión por API: se paga SOLO con documentos. Funciona mientras su casilla
+    esté marcada en la ficha de la empresa; no tiene mensualidad.
+  - Panel web (sistema en línea): servicio adicional con mensualidad propia (o
+    regalía). Funciona si su casilla está marcada y, cuando CONTROL_SUSCRIPCIONES
+    está activo, si tiene un período pagado vigente (se toleran
+    DIAS_GRACIA_SUSCRIPCION días después del vencimiento).
 """
 import calendar
 from datetime import datetime, timedelta
@@ -21,6 +25,8 @@ SERVICIOS = {"api": "Conexión por API", "facturacion_web": "Panel web"}
 MESES_REGALIA = 1200
 # Columna de Emisor con la casilla de cada servicio
 CASILLA = {"api": "acceso_api", "facturacion_web": "facturacion_web"}
+# Servicios que se cobran por mensualidad. La conexión por API se paga solo con documentos.
+CON_MENSUALIDAD = ("facturacion_web",)
 
 
 def minuscula_inicial(texto: str) -> str:
@@ -49,8 +55,9 @@ def estado(db: Session, emisor: Emisor, servicio: str) -> dict:
     ahora = utcnow()
     s = get_settings()
     habilitado = getattr(emisor, CASILLA[servicio]) is not False
-    hasta = vence(db, emisor.id, servicio)
-    if not control_activo():
+    cobrable = servicio in CON_MENSUALIDAD
+    hasta = vence(db, emisor.id, servicio) if cobrable else None
+    if not control_activo() or not cobrable:
         situacion = "ACTIVO" if habilitado else "DESHABILITADO"
     elif not habilitado:
         situacion = "DESHABILITADO"
@@ -64,7 +71,7 @@ def estado(db: Session, emisor: Emisor, servicio: str) -> dict:
         situacion = "VENCIDO"
     regalia = bool(hasta and hasta - ahora > timedelta(days=365 * 50))
     return {
-        "servicio": servicio, "nombre": SERVICIOS[servicio], "habilitado": habilitado,
+        "servicio": servicio, "nombre": SERVICIOS[servicio], "habilitado": habilitado, "con_mensualidad": cobrable,
         "vence": None if regalia else hasta, "regalia": regalia,
         "estado": situacion, "activo": situacion in ("ACTIVO", "POR_VENCER", "EN_GRACIA"),
     }

@@ -31,35 +31,128 @@ function avisarComprobante(comprobante, texto) {
   else toast(texto, 'ok');
 }
 
+// --- Calculadoras de precio -------------------------------------------------
+// Documentos: un plan del catálogo o "cantidad × precio por documento".
+// Sistema web: "meses × precio mensual", o regalía (sin costo).
+// Cada una devuelve { nodo, calculo(), cuerpo(), error() } y avisa con alCambiar()
+// para que el diálogo de empresa nueva pueda sumar el total a pagar.
+
+const redondear = (n) => Math.round(n * 100) / 100;
+const MONEDAS = ['CRC', 'USD'];
+const selectorMoneda = () => h('select', {}, MONEDAS.map((m) => h('option', { value: m }, m)));
+const notaIva = (ajustes) => (ajustes.precio_incluye_iva === false ? 'más IVA' : 'IVA incluido');
+
+function controlesDocumentos(planes, ajustes, alCambiar = () => {}) {
+  const plan = h('select', {},
+    planes.map((p) => h('option', { value: p.id }, `${p.nombre} · ${p.documentos.toLocaleString('es-CR')} documentos · ${dinero(p.precio, p.moneda)}`)),
+    h('option', { value: '' }, 'Otra cantidad: precio por documento'));
+  const documentos = h('input', { type: 'number', min: '1', step: '1', placeholder: 'Ej. 500' });
+  const unitario = h('input', { type: 'number', min: '0', step: '0.01', placeholder: '0 = cortesía' });
+  const moneda = selectorMoneda();
+  const vigencia = h('input', { type: 'number', min: '1', placeholder: 'Vacío = no vence' });
+  const libres = h('div', { class: 'campos' }, campo('Cantidad de documentos', documentos),
+    campo('Precio por documento', unitario), campo('Moneda', moneda), campo('Vigencia (días)', vigencia));
+  const resumen = h('div', { class: 'total-venta' });
+
+  const elegido = () => planes.find((p) => p.id === plan.value);
+  const calculo = () => {
+    const p = elegido();
+    if (p) return { documentos: p.documentos, unitario: Number(p.precio) / p.documentos, total: Number(p.precio), moneda: p.moneda };
+    const d = Math.trunc(Number(documentos.value)) || 0;
+    const u = Number(unitario.value) || 0;
+    return { documentos: d, unitario: u, total: redondear(d * u), moneda: moneda.value };
+  };
+  const pintar = () => {
+    libres.classList.toggle('oculto', Boolean(plan.value));
+    const c = calculo();
+    vaciar(resumen, c.documentos
+      ? [h('span', {}, `${c.documentos.toLocaleString('es-CR')} documentos × ${dinero(c.unitario, c.moneda)}`),
+        h('strong', {}, c.total ? `${dinero(c.total, c.moneda)} (${notaIva(ajustes)})` : 'Cortesía')]
+      : h('span', { class: 'suave' }, 'Indique la cantidad de documentos y el precio por documento'));
+    alCambiar();
+  };
+  for (const el of [plan, documentos, unitario, moneda]) { el.addEventListener('input', pintar); el.addEventListener('change', pintar); }
+  if (!planes.length) plan.value = '';
+  pintar();
+
+  return {
+    nodo: [campo('Plan', plan), libres, resumen],
+    calculo,
+    error: () => (calculo().documentos > 0 ? null : 'Indique la cantidad de documentos'),
+    cuerpo: () => {
+      if (plan.value) return { plan_id: plan.value };
+      const c = calculo();
+      return { documentos: c.documentos, precio: c.total.toFixed(2), moneda: c.moneda,
+        dias_vigencia: vigencia.value ? Number(vigencia.value) : null,
+        // En la bitácora y en el comprobante queda: "Paquete a ₡30 por documento: 500 documentos electrónicos"
+        nombre: `Paquete a ${dinero(c.unitario, c.moneda).replace(/,00$/, '')} por documento`.slice(0, 80) };
+    },
+  };
+}
+
+function controlesPanelWeb(ajustes, alCambiar = () => {}) {
+  const regalia = h('input', { type: 'checkbox' });
+  const meses = h('select', {}, [[1, '1 mes'], [3, '3 meses'], [6, '6 meses'], [12, '12 meses (anual)']]
+    .map(([v, t]) => h('option', { value: String(v) }, t)));
+  const mensual = h('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Ej. 5000 (0 = cortesía)' });
+  const moneda = selectorMoneda();
+  const pago = h('div', { class: 'campos' }, campo('Período', meses), campo('Precio mensual', mensual), campo('Moneda', moneda));
+  const resumen = h('div', { class: 'total-venta' });
+
+  const calculo = () => (regalia.checked
+    ? { regalia: true, meses: 0, mensual: 0, total: 0, moneda: moneda.value }
+    : { regalia: false, meses: Number(meses.value), mensual: Number(mensual.value) || 0,
+      total: redondear(Number(meses.value) * (Number(mensual.value) || 0)), moneda: moneda.value });
+  const pintar = () => {
+    pago.classList.toggle('oculto', regalia.checked);
+    const c = calculo();
+    vaciar(resumen, c.regalia
+      ? [h('span', {}, 'Regalía: sin costo y sin vencimiento'), h('strong', {}, dinero(0, c.moneda))]
+      : [h('span', {}, `${c.meses} ${c.meses === 1 ? 'mes' : 'meses'} × ${dinero(c.mensual, c.moneda)}`),
+        h('strong', {}, `${dinero(c.total, c.moneda)} (${notaIva(ajustes)})`)]);
+    alCambiar();
+  };
+  for (const el of [regalia, meses, mensual, moneda]) { el.addEventListener('input', pintar); el.addEventListener('change', pintar); }
+  pintar();
+
+  return {
+    nodo: [h('label', { class: 'check' }, regalia, 'Regalía (sin costo y sin vencimiento)'), pago, resumen],
+    calculo,
+    error: () => (regalia.checked || mensual.value !== '' ? null : 'Indique el precio mensual del sistema web (o márquelo como regalía)'),
+    cuerpo: () => {
+      const c = calculo();
+      return c.regalia ? { servicio: 'facturacion_web', regalia: true }
+        : { servicio: 'facturacion_web', meses: c.meses, precio: c.total.toFixed(2), moneda: c.moneda };
+    },
+  };
+}
+
+// Suma por moneda: "₡25 000,00" o "₡25 000,00 + $10,00"
+function textoTotal(montos) {
+  const porMoneda = {};
+  for (const { total, moneda } of montos) porMoneda[moneda] = redondear((porMoneda[moneda] || 0) + total);
+  const partes = Object.entries(porMoneda).filter(([, t]) => t > 0).map(([m, t]) => dinero(t, m));
+  return partes.length ? partes.join(' + ') : 'Sin costo';
+}
+
 function dialogoVender(e, planes, ajustes, alTerminar) {
   const comp = controlesComprobante(ajustes);
-  const plan = h('select', {}, h('option', { value: '' }, 'Cantidad libre (cortesía o precio especial)'),
-    planes.map((p) => h('option', { value: p.id }, `${p.nombre} · ${p.documentos} documentos · ${p.moneda} ${p.precio}`)));
-  const documentos = h('input', { type: 'number', min: '1' });
-  const precio = h('input', { type: 'number', min: '0', step: '0.01', placeholder: '0 = cortesía' });
-  const vigencia = h('input', { type: 'number', min: '1', placeholder: 'Vacío = no vence' });
+  const docs = controlesDocumentos(planes, ajustes);
   const referencia = h('input', { type: 'text', maxlength: '100', placeholder: 'N.º de comprobante SINPE / transferencia' });
   const notas = h('input', { type: 'text', maxlength: '1000' });
-  const libres = h('div', { class: 'campos' }, campo('Documentos', documentos), campo('Precio', precio), campo('Vigencia (días)', vigencia));
-  plan.addEventListener('change', () => libres.classList.toggle('oculto', Boolean(plan.value)));
-  if (planes.length) { plan.value = planes[0].id; libres.classList.add('oculto'); }
 
   const vender = h('button', { type: 'button', class: 'primario', onclick: () => conBoton(vender, async () => {
-    const cuerpo = { referencia_pago: referencia.value.trim() || null, notas: notas.value.trim() || null, ...comp.valor() };
-    if (plan.value) {
-      cuerpo.plan_id = plan.value;
-    } else {
-      Object.assign(cuerpo, { documentos: Number(documentos.value), precio: precio.value || '0',
-        dias_vigencia: vigencia.value ? Number(vigencia.value) : null });
-    }
+    const falta = docs.error();
+    if (falta) { toast(falta, 'error'); return; }
+    const cuerpo = { ...docs.cuerpo(), referencia_pago: referencia.value.trim() || null, notas: notas.value.trim() || null, ...comp.valor() };
     const r = await api(`/emisores/${e.id}/paquetes`, { method: 'POST', body: cuerpo, conEmisor: false });
     m.cerrar();
     avisarComprobante(r.comprobante, `Paquete acreditado (saldo: ${r.disponible.toLocaleString('es-CR')} documentos)`);
     alTerminar();
   }) }, 'Acreditar paquete');
 
-  const m = modal(`Vender paquete a ${e.nombre}`, [
-    campo('Plan', plan), libres,
+  const m = modal(`Vender documentos a ${e.nombre}`, [
+    docs.nodo,
     h('div', { class: 'campos' }, campo('Referencia del pago', referencia), campo('Notas', notas)),
     comp.nodo,
     h('p', { class: 'suave' }, 'Registre el paquete después de confirmar el pago. Queda en la bitácora de ventas.'),
@@ -173,12 +266,15 @@ export async function vistaEmpresas(cont) {
   pintar();
   vaciar(cont,
     h('div', { class: 'encabezado' }, h('h1', {}, 'Empresas cliente'),
-      h('button', { type: 'button', class: 'primario', onclick: () => dialogoNueva() }, '+ Nueva empresa')),
+      h('button', { type: 'button', class: 'primario', onclick: (ev) => conBoton(ev.target, dialogoNueva) }, '+ Nueva empresa')),
     h('div', { class: 'fila' }, q, filtro),
     h('section', { class: 'tarjeta' }, resultados));
 }
 
-function dialogoNueva() {
+async function dialogoNueva() {
+  // Planes de documentos y ajustes de ventas, para registrar la venta inicial
+  const [planes, ajustes] = await Promise.all([
+    api('/planes?activos=true', { conEmisor: false }), api('/admin/ajustes', { conEmisor: false })]);
   const tipo = h('select', {}, opciones({ '02': TIPOS_IDENTIFICACION['02'], '01': TIPOS_IDENTIFICACION['01'], '03': 'DIMEX', '04': 'NITE' }, '02'));
   const numero = h('input', { type: 'text', maxlength: '12' });
   const entradas = entradasEmpresa();
@@ -209,26 +305,88 @@ function dialogoNueva() {
       activas.length > 1 ? h('p', { class: 'suave' }, 'Tiene varias actividades: puede elegir otra en "Código de actividad".') : null);
   });
   const autocompletar = h('button', { type: 'button', onclick: () => conBoton(autocompletar, consultar) }, 'Buscar en Hacienda');
-  const conPanel = h('input', { type: 'checkbox' });
+  // Modalidad de venta: solo API (paga documentos) o API + sistema web (documentos + mensualidad).
+  // Se puede cambiar después en la pestaña "Datos" de la empresa.
+  const modalidad = (valor, titulo, ayuda, marcado) => {
+    const radio = h('input', { type: 'radio', name: 'modalidad-empresa', value: valor, checked: marcado });
+    return [radio, h('label', { class: 'opcion-modalidad' }, radio, h('strong', {}, titulo), h('span', { class: 'suave' }, ayuda))];
+  };
+  const [soloApi, tarjetaApi] = modalidad('api', 'Solo conexión por API',
+    'Factura desde su POS, ERP, tienda en línea o n8n. Paga únicamente los documentos que compra.', true);
+  const [conPanel, tarjetaWeb] = modalidad('web', 'API + sistema web',
+    'Además entra al panel a hacer facturas, clientes, inventario y punto de venta. Lleva mensualidad (o regalía).', false);
+
+  // Venta inicial: documentos (cantidad × precio por documento) + sistema web (meses × mensualidad).
+  // El total a pagar se recalcula con cada cambio.
+  const total = h('div', { class: 'total-venta total-general' });
+  const recalcular = () => {
+    if (!docs || !web) return;
+    const montos = [docs.calculo()];
+    if (conPanel.checked) montos.push(web.calculo());
+    vaciar(total, h('span', {}, `Total a pagar (${notaIva(ajustes)})`), h('strong', {}, textoTotal(montos)));
+  };
+  let docs = null;
+  let web = null;
+  docs = controlesDocumentos(planes, ajustes, recalcular);
+  web = controlesPanelWeb(ajustes, recalcular);
+  const comp = controlesComprobante(ajustes);
+  const referencia = h('input', { type: 'text', maxlength: '100', placeholder: 'N.º de comprobante SINPE / transferencia' });
+  const venderAhora = h('input', { type: 'checkbox', checked: true });
+  const bloqueWeb = h('div', { class: 'oculto' }, h('h3', {}, 'Sistema web'), web.nodo);
+  const bloqueVenta = h('div', {},
+    h('h3', {}, 'Documentos'), docs.nodo, bloqueWeb, total,
+    h('div', { class: 'campos' }, campo('Referencia del pago', referencia)), comp.nodo);
+  const alCambiarModalidad = () => { bloqueWeb.classList.toggle('oculto', !conPanel.checked); recalcular(); };
+  soloApi.addEventListener('change', alCambiarModalidad);
+  conPanel.addEventListener('change', alCambiarModalidad);
+  venderAhora.addEventListener('change', () => bloqueVenta.classList.toggle('oculto', !venderAhora.checked));
+  recalcular();
+
+  // Registra lo vendido. Si falla, la empresa ya existe: se avisa para registrarlo en "Compras".
+  const registrarVenta = async (e) => {
+    const pago = { referencia_pago: referencia.value.trim() || null, ...comp.valor() };
+    try {
+      await api(`/emisores/${e.id}/paquetes`, { method: 'POST', body: { ...docs.cuerpo(), ...pago }, conEmisor: false });
+      if (conPanel.checked) {
+        const cuerpoWeb = web.cuerpo();
+        await api(`/emisores/${e.id}/suscripciones`, { method: 'POST', conEmisor: false,
+          body: cuerpoWeb.regalia ? cuerpoWeb : { ...cuerpoWeb, ...pago } });
+      }
+      return true;
+    } catch (err) {
+      toast(`La empresa se creó, pero la venta no se registró: ${err.message}\nRegístrela en la pestaña "Compras".`, 'error');
+      return false;
+    }
+  };
 
   const guardar = h('button', { type: 'button', class: 'primario', onclick: () => conBoton(guardar, async () => {
+    if (venderAhora.checked) {
+      const falta = docs.error() || (conPanel.checked ? web.error() : null);
+      if (falta) { toast(falta, 'error'); return; }
+    }
     const cuerpo = { tipo_identificacion: tipo.value, numero_identificacion: limpiarIdentificacion(numero.value), ambiente: ambiente.value };
     for (const [k, el] of Object.entries(entradas)) if (el.value.trim()) cuerpo[k] = el.value.trim();
     const e = await api('/emisores', { method: 'POST', body: cuerpo, conEmisor: false });
     if (conPanel.checked) await api(`/emisores/${e.id}`, { method: 'PATCH', body: { facturacion_web: true }, conEmisor: false });
+    const vendido = venderAhora.checked ? await registrarVenta(e) : false;
     m.cerrar();
     await cargarContexto();
     sesion.emisorId = e.id;
-    toast('Empresa creada. Cargue ahora el certificado y las credenciales.', 'ok');
+    if (vendido) toast('Empresa creada y venta registrada. Siga con el certificado .p12 y las credenciales de Hacienda.', 'ok');
+    else if (!venderAhora.checked) toast('Empresa creada. Siga con: certificado .p12, credenciales de Hacienda y vender los documentos.', 'ok');
     location.hash = `#/empresas/${e.id}`;
   }) }, 'Crear empresa');
 
   const m = modal('Nueva empresa', [
+    h('p', { class: 'etiqueta-seccion' }, '¿Cómo va a facturar esta empresa?'),
+    h('div', { class: 'modalidades' }, tarjetaApi, tarjetaWeb),
     h('div', { class: 'campos' }, campo('Tipo', tipo), h('div', { class: 'fila' }, campo('Identificación', numero), autocompletar),
       campo('Ambiente de Hacienda', ambiente)),
     estadoHacienda, listaActividades,
     camposEmpresa(entradas),
-    h('label', { class: 'check' }, conPanel, 'Incluir el panel web para sus usuarios (servicio adicional; por defecto factura solo por API)'),
+    h('section', { class: 'venta-inicial' },
+      h('label', { class: 'check etiqueta-seccion' }, venderAhora, 'Registrar ahora lo que compra (el cliente ya pagó)'),
+      bloqueVenta),
   ], { acciones: [guardar], ancho: true });
 }
 
@@ -236,26 +394,18 @@ const ESTADO_COBRO = { VIGENTE: 'ACEPTADO', PROGRAMADA: 'PENDIENTE', VENCIDA: 'C
 
 function dialogoCobrarServicio(e, servicio, ajustes, alTerminar) {
   const comp = controlesComprobante(ajustes);
-  const meses = h('select', {}, [[1, '1 mes'], [3, '3 meses'], [6, '6 meses'], [12, '12 meses (anual)']]
-    .map(([v, t]) => h('option', { value: String(v) }, t)));
-  const precio = h('input', { type: 'number', min: '0', step: '0.01', placeholder: 'Total del período (0 = cortesía)' });
-  const moneda = h('select', {}, ['CRC', 'USD'].map((m) => h('option', { value: m }, m)));
   const referencia = h('input', { type: 'text', maxlength: '100', placeholder: 'Comprobante SINPE o transferencia' });
   const notas = h('input', { type: 'text', maxlength: '1000' });
   const vence = servicio.vence ? new Date(servicio.vence) : null;
-  // Regalía: sin costo y sin vencimiento (típico para el panel web como cortesía)
-  const regalia = h('input', { type: 'checkbox' });
-  const bloquePago = h('div', {},
-    h('div', { class: 'campos' }, campo('Período', meses), campo('Precio cobrado', precio), campo('Moneda', moneda),
-      campo('Referencia del pago', referencia)),
-    comp.nodo);
-  regalia.addEventListener('change', () => bloquePago.classList.toggle('oculto', regalia.checked));
+  // La regalía (sin costo ni vencimiento) no lleva pago ni comprobante
+  const bloquePago = h('div', {}, h('div', { class: 'campos' }, campo('Referencia del pago', referencia)), comp.nodo);
+  let web = null;   // se asigna abajo; el aviso inicial de la calculadora llega antes
+  web = controlesPanelWeb(ajustes, () => { if (web) bloquePago.classList.toggle('oculto', web.calculo().regalia); });
   const cobrar = h('button', { type: 'button', class: 'primario', onclick: () => conBoton(cobrar, async () => {
-    if (!regalia.checked && precio.value === '') { toast('Indique el precio cobrado', 'error'); return; }
-    const cuerpo = regalia.checked
-      ? { servicio: servicio.servicio, regalia: true, notas: notas.value.trim() || null }
-      : { servicio: servicio.servicio, meses: Number(meses.value), precio: precio.value, moneda: moneda.value,
-        referencia_pago: referencia.value.trim() || null, notas: notas.value.trim() || null, ...comp.valor() };
+    const falta = web.error();
+    if (falta) { toast(falta, 'error'); return; }
+    const cuerpo = { ...web.cuerpo(), servicio: servicio.servicio, notas: notas.value.trim() || null };
+    if (!cuerpo.regalia) Object.assign(cuerpo, { referencia_pago: referencia.value.trim() || null, ...comp.valor() });
     const r = await api(`/emisores/${e.id}/suscripciones`, { method: 'POST', conEmisor: false, body: cuerpo });
     m.cerrar();
     avisarComprobante(r.comprobante, r.servicio.regalia ? `${servicio.nombre}: activo como regalía`
@@ -268,7 +418,7 @@ function dialogoCobrarServicio(e, servicio, ajustes, alTerminar) {
     vence && vence > new Date()
       ? aviso(`Está pagado hasta ${fecha(servicio.vence, false)}: el nuevo período empieza ese día.`, 'info') : null,
     servicio.regalia ? aviso('Ya está activo como regalía.', 'info') : null,
-    h('label', { class: 'check' }, regalia, 'Regalía (sin costo y sin vencimiento)'),
+    web.nodo,
     bloquePago,
     campo('Notas', notas),
   ], { acciones: [cobrar], ancho: true });
@@ -369,7 +519,7 @@ async function pestanaCompras(id, e, cont, refrescar) {
     h('section', { class: 'tarjeta' },
       h('div', { class: 'encabezado' }, h('h2', {}, 'Historial de compras'),
         h('div', { class: 'acciones' },
-          servicios.control_activo ? servicios.servicios.map((s) => h('button', { type: 'button', onclick: () => dialogoCobrarServicio(e, s, ajustes, refrescar) },
+          servicios.control_activo ? servicios.servicios.filter((s) => s.con_mensualidad).map((s) => h('button', { type: 'button', onclick: () => dialogoCobrarServicio(e, s, ajustes, refrescar) },
             `${s.vence ? 'Renovar' : 'Cobrar'} ${s.nombre.toLowerCase()}`)) : null,
           saldoEmpresa.control_activo ? h('button', { type: 'button', class: 'primario', onclick: () => dialogoVender(e, planes, ajustes, refrescar) }, '+ Vender paquete') : null)),
       tabla([
@@ -482,11 +632,14 @@ function pestanaDatos(id, e, cont, refrescar) {
     h('section', { class: 'tarjeta' }, h('h2', {}, 'Datos de la empresa'),
       camposEmpresa(entradas),
       h('div', { class: 'campos' },
-        campo('Ambiente de Hacienda', ambiente), h('label', { class: 'check' }, activo, 'Empresa activa'),
-        h('label', { class: 'check', title: 'Emitir, clientes, productos e inventario desde el panel para los usuarios de la empresa' },
-          facturacionWeb, 'Panel web para los usuarios de la empresa (servicio adicional: se cobra o se regala en Compras)'),
-        h('label', { class: 'check', title: 'El sistema de facturación del cliente se conecta con sus API keys' },
-          accesoApi, 'Conexión por API (su sistema de facturación)')),
+        campo('Ambiente de Hacienda', ambiente), h('label', { class: 'check' }, activo, 'Empresa activa')),
+      // Servicios: se encienden o apagan aquí; el cobro del panel web se registra en "Compras".
+      h('p', { class: 'etiqueta-seccion' }, 'Servicios habilitados'),
+      h('div', { class: 'modalidades' },
+        h('label', { class: 'opcion-modalidad' }, accesoApi, h('strong', {}, 'Conexión por API'),
+          h('span', { class: 'suave' }, 'Su sistema de facturación se conecta con las API keys (pestaña Integración). Se paga solo con documentos.')),
+        h('label', { class: 'opcion-modalidad' }, facturacionWeb, h('strong', {}, 'Sistema web'),
+          h('span', { class: 'suave' }, 'Sus usuarios entran al panel a facturar, manejar clientes e inventario. Servicio adicional: se cobra o se regala en "Compras".'))),
       h('div', { class: 'acciones' }, guardar)),
     seccionLogo(id, e.tiene_logo, refrescar));
 }
