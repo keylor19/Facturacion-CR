@@ -40,10 +40,23 @@ sí se firmó y se envió. Revise bien los datos antes de enviar.
 
 ---
 
-## 2. Entrar al sistema
+## 2. Crear su cuenta y entrar
 
-1. Abra la dirección que le dio su proveedor.
-2. Escriba su **correo** y su **contraseña** y presione **Ingresar**.
+**La primera vez** toque **Créela gratis** en la página de entrada:
+
+1. Elija **Voy a facturar** y acepte los términos.
+2. Toque **Continuar con Google** o **Continuar con Microsoft**, o escriba su nombre, correo y una
+   contraseña (le llega un correo con el enlace para activar la cuenta).
+3. **Inscriba su empresa:** escriba la cédula y toque **Buscar en Hacienda** (se llenan el nombre y
+   sus actividades). Complete el nombre comercial, el correo, el teléfono y la dirección y toque
+   **Inscribir mi empresa**. La empresa debe estar inscrita en Hacienda.
+4. Queda como **dueño**, con documentos y días del sistema en línea de prueba. Siga los
+   **Primeros pasos** (sección 4).
+
+**Las siguientes veces**:
+
+1. Abra la dirección del servicio.
+2. Toque **Continuar con Google / Microsoft**, o escriba su **correo** y su **contraseña** y presione **Ingresar**.
 3. Si activó la verificación en dos pasos, escriba el código de 6 dígitos
    que muestra la aplicación de su teléfono.
 
@@ -89,6 +102,19 @@ o rojo, le quedan pocos: contacte a su proveedor para comprar más.
 ---
 
 ## 4. Primeros pasos (una sola vez)
+
+*Configuración → Primeros pasos* le muestra una lista con lo que falta y se marca sola
+(también le muestra **Agregar usuarios** para quienes facturan con usted y **Comprar documentos**):
+
+- **Llave criptográfica (.p12) y su PIN**, y **usuario y contraseña de Hacienda**.
+  Se sacan en TRIBU-CR, en *Comprobantes electrónicos → Generar llave criptográfica*.
+  Súbalos ahí mismo (solo el dueño) y toque **Probar conexión con Hacienda**.
+- Datos de la empresa, logo, productos y la primera factura.
+
+Si se inscribió solo desde la página de entrada (**Pruébelo gratis**), empieza con
+documentos y días del sistema en línea de regalo, en el ambiente de pruebas.
+
+Además:
 
 1. **Revise los datos de su empresa:** *Configuración → Datos de la empresa*.
    Debe decir que el certificado está **Cargado** y mostrar el ambiente
@@ -185,6 +211,18 @@ pago), use **Formulario completo**.
 
 ### 5.4 Tiquete electrónico
 
+Para el consumidor final. Puede dejar al cliente vacío (sale «Consumidor final»)
+o escribir **solo su nombre**, sin cédula. Si el cliente pide factura a su nombre
+para deducir el gasto, use factura electrónica con su cédula.
+
+### 5.4.1 Facturas que se repiten (alquileres, mensualidades)
+
+Llene la factura una vez y toque **Repetir automáticamente**: póngale un nombre,
+la frecuencia (cada semana, 15 días, mes o año), la primera fecha y, si quiere,
+la última. El sistema la emite sola a las 7:00 a. m. de cada fecha y al cliente le
+llega por correo. Las ve en *Facturar → Facturas recurrentes*: ahí puede pausarlas,
+emitir una hoy o borrarlas.
+
 Es igual a la factura, pero el cliente es opcional. Úselo cuando la persona
 no da su cédula. Hacienda no le permite al cliente usar un tiquete como gasto
 deducible: si lo pide para su empresa, hágale **factura**.
@@ -241,7 +279,10 @@ Los cierres anteriores están en *Documentos → Cierres de caja*.
 
 Toque el comprobante en la lista para abrirlo:
 
-- **PDF:** para imprimir o enviarlo.
+- **PDF:** para imprimir o enviarlo en hoja carta.
+- **Imprimir tiquete:** en rollo de impresora térmica de **80 mm** o **58 mm** (elija el ancho una vez; el navegador lo recuerda).
+- **Enviar por WhatsApp:** escriba el celular del cliente y se abre WhatsApp con un mensaje y un enlace para que
+  descargue su factura sin usuario. También puede **copiar el enlace** y pegarlo en cualquier chat.
 - **Enviar por correo:** lo reenvía al cliente (o a otro correo).
 - **Consultar estado:** pregunta de nuevo a Hacienda.
 - **Anular con nota de crédito:** sección 7.
@@ -303,15 +344,21 @@ Una factura **rechazada no tiene validez**, así que no hay que anularla:
 
 ## 8. Ventas a crédito y cobros
 
-*Documentos → Facturas por cobrar*
+*Documentos → Cuentas por cobrar*
 
-- **Crédito al Estado e IVA hasta 90 días:** cuando el cliente le paga
-  (todo o una parte), presione **Registrar pago**. El sistema emite el
-  **Recibo Electrónico de Pago** ante Hacienda con el IVA que corresponde a
-  ese pago, como lo exige Hacienda (gasta 1 documento). La tabla muestra el
-  saldo de cada factura: *Pendiente*, *Pago parcial* o *Pagada*.
-- **Facturas a crédito comercial:** Hacienda no usa recibo de pago para
-  estas. El sistema solo se las lista para que controle el cobro.
+- Arriba ve cuánto le deben, cuánto está **vencido** y la **antigüedad**:
+  al día, 1 a 30, 31 a 60, 61 a 90 y más de 90 días.
+- **Por cliente:** toque un cliente para ver su **estado de cuenta** (facturas,
+  pagos y saldo) e **imprimirlo o guardarlo en PDF** para mandárselo.
+- **Registrar pago:** en cada factura pendiente.
+  - **Crédito comercial (condición 02):** se anota el abono (monto, fecha,
+    SINPE, transferencia…). Hacienda no pide comprobante para estos cobros y
+    no gasta documentos. Si se equivocó, el dueño puede anular el abono.
+  - **Crédito al Estado e IVA hasta 90 días:** el sistema emite el **Recibo
+    Electrónico de Pago** ante Hacienda con el IVA de ese pago (gasta 1 documento).
+- **Recordatorios automáticos:** active la casilla y el sistema le escribe al
+  cliente a los 1, 8, 15, 30 y 60 días de atraso. Las respuestas le llegan a su correo.
+- Si anula una factura a crédito con nota de crédito, su saldo queda en cero.
 
 Los recibos emitidos están en *Documentos → Recibos de pago*.
 
@@ -412,15 +459,19 @@ le envió el proveedor (*Para facturas que no llegaron al correo conectado*).
 
 ## 11. Reportes y contabilidad
 
-### 11.1 Reporte de IVA (declaración D-104)
+### 11.1 Contabilidad e impuestos (solo el dueño)
 
-*Reportes → Reporte de IVA*. Elija el mes:
+El menú **Contabilidad** lo ve **solo el dueño** de la empresa; los usuarios
+administrativos y cajeros no. Ahí está todo: comprobantes del mes y su contabilización
+automática (con el costo de ventas desde el inventario), libro diario, catálogo de cuentas,
+balance general, estado de resultados, cierre de meses y del año, **reporte de IVA**,
+**borrador de la D-104** y libros de ventas y compras. El *Manual del contador* lo explica
+paso a paso.
 
-- **IVA débito fiscal (ventas)** y **IVA crédito fiscal (compras)**, por tarifa.
-- **IVA neto estimado:** lo que le tocaría pagar.
-- **Notas por error material:** las que afectan otros meses, y los meses
-  que hay que **rectificar** si ya los declaró.
-- **Libro de ventas (Excel)** y **Libro de compras (Excel)** para su contador.
+Puede llevar su contabilidad usted mismo o con un **contador**: él entra con su propio
+usuario de contador, busca su empresa por la cédula y le llega a usted un correo de aviso.
+Ve la contabilidad pero no puede facturar ni cambiar nada. Usted ve quiénes tienen acceso en
+*Configuración → Usuarios → Contadores con acceso* y les puede quitar el acceso.
 
 ### 11.2 Otros reportes
 
@@ -448,8 +499,59 @@ el **tipo de cambio** del día.
 
 Cuando le quedan pocos documentos, o se le está por vencer el sistema en
 línea, le llega un correo con las formas de pago y el contacto de su
-proveedor. **Sin documentos no puede emitir.** Al comprar un paquete puede
-seguir facturando de inmediato.
+proveedor. **Sin documentos no puede emitir.**
+
+**Comprar en línea:** en esta misma pantalla toque **Comprar documentos**, elija el
+paquete (y, si quiere, meses del sistema en línea), pague por SINPE Móvil o
+transferencia con los datos que aparecen, y escriba el número del comprobante
+(puede adjuntar la foto). Al confirmar su proveedor el pago, se acredita y le llega
+un correo.
+
+### Mis servicios y facturas
+
+*Configuración → Mis servicios y facturas* (solo el dueño). Cada servicio se cobra por aparte:
+
+| Servicio | Quién lo paga | Cómo se cobra |
+|---|---|---|
+| **Documentos facturables** | La empresa | Paquetes prepago: los compra y los recarga cuando quiera (Mi saldo → Comprar documentos). |
+| **Sistema en línea** | La empresa que factura desde el navegador | Mensualidad. Se activa al inscribir la empresa, con días de prueba gratis. |
+| **Contabilidad de la empresa** | La empresa, solo si el dueño la lleva él mismo | Mensualidad. Se activa en Mis servicios. |
+| **Cuenta de contador** | El contador | Mensualidad. Cubre todas las empresas que lleva (ellas no pagan contabilidad). |
+
+La conexión por API no tiene mensualidad: se paga solo con documentos.
+
+**Cómo se cobran las mensualidades:**
+1. Al pedir un servicio se le muestra el precio («₡X por mes») y queda activo de inmediato. La
+   primera vez, con los días de prueba gratis. El precio queda fijo para ese cliente.
+2. El **día 1** de cada mes el sistema emite **una factura electrónica** por cliente con los
+   servicios del mes anterior, **proporcional a los días** que los tuvo (sin contar la prueba), a
+   crédito por los días para pagar, y le manda el detalle por correo.
+3. Tres días antes del vencimiento le llega un recordatorio. Si vence sin pagar, las
+   **mensualidades se suspenden solas** (los documentos ya pagados siguen sirviendo por API) y se
+   reactivan apenas reporta el pago.
+4. El cliente paga por SINPE o transferencia y lo **reporta** en Mis servicios → Facturas.
+
+Para activar un servicio toque **Activar por ₡X al mes**; para dejarlo, **Cancelar** (ese mes se
+cobra solo por los días que lo usó). Abajo ve sus **facturas mensuales**; al pagar toque
+**Reportar pago** y escriba el número del comprobante.
+
+---
+
+## 12.1 Usuarios y permisos
+
+*Configuración → Usuarios* (solo el dueño de la empresa):
+
+| Rol | Puede |
+|---|---|
+| **Dueño** | Todo lo de la empresa: vender, anular, precios, configuración, usuarios y la contabilidad. |
+| **Administrativo** | Facturas, notas y anulaciones, cobros y facturas de proveedores. No cambia precios ni usa la caja. |
+| **Cajero** | Vender (factura, tiquete, punto de venta) y cobrar. No anula. |
+
+Cada persona entra con su propio usuario y el menú le muestra solo lo que puede usar.
+
+**Su contador** no es un usuario de su empresa: tiene un usuario de contador y escoge su
+empresa por la cédula (sección 11.1). Usted lo ve en *Contadores con acceso* y le puede
+quitar el acceso.
 
 ---
 

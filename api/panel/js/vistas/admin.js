@@ -70,6 +70,10 @@ export async function vistaTableroAdmin(cont) {
       ventasMes.length ? ventasMes.map(([m, v]) => kpi(`Ventas del mes (${m})`, dinero(v, m), { enlace: '#/planes' }))
         : kpi('Ventas del mes', dinero(0), { enlace: '#/planes' }),
       kpi('Documentos vendidos este mes', t.documentos_vendidos_mes.toLocaleString('es-CR'), { nota: `${t.documentos_consumidos_mes.toLocaleString('es-CR')} usados por los clientes` }),
+      kpi('Compras por revisar', t.pagos_por_revisar, { clase: t.pagos_por_revisar ? 'alerta' : '', enlace: '#/admin/solicitudes' }),
+      kpi('Mensualidades por confirmar', t.mensualidades_por_confirmar, { clase: t.mensualidades_por_confirmar ? 'alerta' : '', enlace: '#/admin/mensualidades' }),
+      kpi('Inscripciones esta semana', t.empresas_nuevas_semana, { enlace: '#/empresas',
+        nota: `${t.cuentas_nuevas_semana} cuenta(s) nueva(s) · ${t.cuentas_sin_empresa} sin inscribir su empresa` }),
       kpi('Empresas activas', t.empresas_activas, { enlace: '#/empresas' }),
       kpi('Empresas con problemas', t.empresas_con_errores, { clase: t.empresas_con_errores ? 'alerta' : '', nota: `${t.empresas_con_alertas} requieren atención` })),
     h('div', { class: 'campos dos' },
@@ -126,12 +130,24 @@ export async function vistaAjustesVentas(cont) {
     a.instrucciones_pago || '');
   const contacto = h('input', { type: 'text', maxlength: '200', value: a.contacto_ventas || '', placeholder: 'WhatsApp 8888-8888 · ventas@suempresa.com' });
   const correoAvisos = h('input', { type: 'email', value: a.correo_avisos || '', placeholder: 'ventas@suempresa.com' });
+  const autoregistro = h('input', { type: 'checkbox', checked: a.autoregistro });
+  const pruebaDocs = h('input', { type: 'number', min: '0', max: '1000', step: '1', value: String(a.prueba_documentos ?? 20) });
+  const pruebaDias = h('input', { type: 'number', min: '0', max: '90', step: '1', value: String(a.prueba_dias ?? 15) });
+  const precioWeb = h('input', { type: 'number', min: '0', step: '0.01', value: a.precio_web_mensual || '', placeholder: 'Vacío = no se vende en línea' });
+  const monedaWeb = h('select', {}, ['CRC', 'USD'].map((m) => h('option', { value: m, selected: m === a.moneda_web }, m)));
+  const precioConta = h('input', { type: 'number', min: '0', step: '0.01', value: a.precio_contabilidad_mensual || '', placeholder: 'Vacío = sin costo' });
+  const precioContador = h('input', { type: 'number', min: '0', step: '0.01', value: a.precio_contador_mensual || '', placeholder: 'Vacío = sin costo' });
+  const diasPagar = h('input', { type: 'number', min: '1', max: '60', step: '1', value: String(a.dias_para_pagar ?? 10) });
   const guardar = h('button', { type: 'button', class: 'primario', onclick: () => conBoton(guardar, async () => {
     await api('/admin/ajustes', { method: 'PUT', conEmisor: false, body: {
       emisor_ventas_id: emisor.value || null, codigo_cabys: cabys.value.trim() || null, codigo_tarifa_iva: tarifa.value,
       precio_incluye_iva: incluyeIva.checked, tipo_comprobante: tipo.value, medio_pago: medio.value,
       instrucciones_pago: instrucciones.value.trim() || null, contacto_ventas: contacto.value.trim() || null,
       correo_avisos: correoAvisos.value.trim() || null,
+      autoregistro: autoregistro.checked, prueba_documentos: Number(pruebaDocs.value || 0), prueba_dias: Number(pruebaDias.value || 0),
+      precio_web_mensual: precioWeb.value ? precioWeb.value : null, moneda_web: monedaWeb.value,
+      precio_contabilidad_mensual: precioConta.value || null, precio_contador_mensual: precioContador.value || null,
+      dias_para_pagar: Number(diasPagar.value || 10),
     } });
     toast('Ajustes guardados', 'ok');
   }) }, 'Guardar');
@@ -154,6 +170,22 @@ export async function vistaAjustesVentas(cont) {
       h('div', { class: 'campos dos' }, campo('Formas de pago', instrucciones),
         h('div', {}, campo('Contacto para comprar', contacto),
           campo('Su correo (recibe copia de cada aviso y las respuestas de los clientes)', correoAvisos)))),
+    h('section', { class: 'tarjeta' }, h('h2', {}, 'Venta en línea'),
+      h('p', { class: 'suave' }, 'Los clientes compran los planes activos (con precio) desde Mi saldo: pagan por SINPE o transferencia, '
+        + 'le avisan y usted aprueba en Ventas → Pagos por revisar. La inscripción propia necesita el correo de salida (SMTP) configurado.'),
+      h('div', { class: 'campos dos' },
+        h('label', { class: 'check' }, autoregistro, 'Permitir que nuevas empresas se inscriban solas desde la página de entrada'),
+        campo('Documentos gratis al inscribirse', pruebaDocs), campo('Días gratis del sistema en línea', pruebaDias),
+        campo('Precio por mes del sistema en línea', precioWeb), campo('Moneda', monedaWeb))),
+    h('section', { class: 'tarjeta' }, h('h2', {}, 'Mensualidades'),
+      h('p', { class: 'suave' }, 'Cada servicio se cobra por aparte. Los documentos, por paquete (prepago). Las mensualidades se activan cuando el '
+        + 'cliente las pide (viendo el precio) y se cobran en una factura el día 1 de cada mes, proporcional a los días. Si no paga en el '
+        + 'plazo, se suspenden solas. Un precio vacío = ese servicio no se cobra. Se usa la moneda de arriba.'),
+      h('div', { class: 'campos dos' },
+        campo('Sistema en línea (por mes, arriba)', h('input', { type: 'text', disabled: true, value: 'Se configura en «Venta en línea»' })),
+        campo('Contabilidad que lleva el dueño (por mes)', precioConta),
+        campo('Cuenta de contador (por mes)', precioContador),
+        campo('Días para pagar la factura mensual', diasPagar))),
     h('div', { class: 'acciones' }, guardar));
 }
 

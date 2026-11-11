@@ -17,7 +17,7 @@ Incluye un flujo listo para importar, probado contra el servicio:
 | 5 | `POST /webhook/facturacion/accion` | Anular, reenviar, pagos, proformas, facturas de proveedores |
 | 6 | `GET /webhook/facturacion/recibidas` | Facturas de proveedores por aceptar o rechazar |
 | 6 | `GET /webhook/facturacion/saldo` | Documentos disponibles y servicios |
-| 7 | (automático, día 1 a las 7:00) | Resumen de IVA y libros del mes para el contador |
+| 7 | (automático, día 1 a las 7:00) | Respaldo de los XML del mes en un ZIP |
 | 8 | `POST /webhook/facturacion/avisos` | Recibir los avisos del servicio (lo llama el servicio) |
 
 ## 1. Lo que entrega el proveedor
@@ -197,13 +197,13 @@ Luego el flujo separa los avisos en tres ramas para que conecte lo que necesite:
 Otros eventos (`comprobante.error_comunicacion`, `mensaje_receptor.aceptado`)
 llegan a "Otros eventos": el servicio los reintenta solo.
 
-## 9. Cierre del mes para el contador (sección 7 del flujo)
+## 9. Respaldo del mes (sección 7 del flujo)
 
-Corre solo el día 1 a las 7:00: trae el resumen de IVA y los libros de ventas
-y compras (Excel) del mes anterior y los deja listos con asunto y texto. Cambie
-el último nodo por **Gmail**, **Send Email** o **Google Drive** para enviárselos
-al contador. Si necesita los XML, use `GET /reportes/documentos.zip?desde=…&hasta=…`
-con la misma credencial.
+Corre solo el día 1 a las 7:00: descarga en un ZIP los XML del mes anterior
+(emitidos, recibidos y respuestas de Hacienda) con su índice en Excel. Cambie el
+último nodo por **Google Drive**, **Dropbox** o **Gmail** para guardarlo o
+mandárselo a su contador. El IVA, la D-104 y los libros contables los lleva su
+contador en su propio módulo de contabilidad.
 
 ## 10. Pruebas
 

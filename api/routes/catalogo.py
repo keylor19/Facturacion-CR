@@ -16,7 +16,7 @@ from api.models.schemas import (
     CategoriaRequest, ClienteDatos, ClienteResponse, DescuentoRequest, MovimientoRequest, ProductoActualizar,
     ProductoCrear, ProductoResponse,
 )
-from api.security import Principal, autenticar, emisor_actual, emisor_facturacion_web
+from api.security import Principal, autenticar, emisor_actual, emisor_facturacion_web, permiso
 from api.services import auditoria, inventario
 from api.services.fechas import ahora_cr, zona_cr
 from api.services.reportes import _csv
@@ -72,7 +72,7 @@ def obtener_cliente(cliente_id: UUID, emisor: Emisor = Depends(emisor_facturacio
     return _cliente_respuesta(_cliente(db, emisor, cliente_id))
 
 
-@router.post("/catalogo/clientes", response_model=ClienteResponse, status_code=201)
+@router.post("/catalogo/clientes", response_model=ClienteResponse, status_code=201, dependencies=[Depends(permiso("clientes"))])
 def crear_cliente(payload: ClienteDatos, emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     existente = db.scalar(select(Cliente).where(
         Cliente.emisor_id == emisor.id, Cliente.numero_identificacion == payload.numero_identificacion))
@@ -91,7 +91,7 @@ def crear_cliente(payload: ClienteDatos, emisor: Emisor = Depends(emisor_factura
     return _cliente_respuesta(c)
 
 
-@router.put("/catalogo/clientes/{cliente_id}", response_model=ClienteResponse)
+@router.put("/catalogo/clientes/{cliente_id}", response_model=ClienteResponse, dependencies=[Depends(permiso("clientes"))])
 def actualizar_cliente(cliente_id: UUID, payload: ClienteDatos,
                        emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     c = _cliente(db, emisor, cliente_id)
@@ -105,7 +105,7 @@ def actualizar_cliente(cliente_id: UUID, payload: ClienteDatos,
     return _cliente_respuesta(c)
 
 
-@router.delete("/catalogo/clientes/{cliente_id}", status_code=204)
+@router.delete("/catalogo/clientes/{cliente_id}", status_code=204, dependencies=[Depends(permiso("clientes"))])
 def eliminar_cliente(cliente_id: UUID, emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     """Lo quita del catálogo (sus facturas no se afectan)."""
     _cliente(db, emisor, cliente_id).activo = False
@@ -153,7 +153,7 @@ def obtener_producto(producto_id: UUID, emisor: Emisor = Depends(emisor_facturac
     return inventario.a_respuesta(_producto(db, emisor, producto_id))
 
 
-@router.post("/catalogo/productos", response_model=ProductoResponse, status_code=201)
+@router.post("/catalogo/productos", response_model=ProductoResponse, status_code=201, dependencies=[Depends(permiso("catalogo"))])
 def crear_producto(payload: ProductoCrear, principal: Principal = Depends(autenticar),
                    emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     try:
@@ -169,7 +169,7 @@ def crear_producto(payload: ProductoCrear, principal: Principal = Depends(autent
     return inventario.a_respuesta(p)
 
 
-@router.patch("/catalogo/productos/{producto_id}", response_model=ProductoResponse)
+@router.patch("/catalogo/productos/{producto_id}", response_model=ProductoResponse, dependencies=[Depends(permiso("catalogo"))])
 def actualizar_producto(producto_id: UUID, payload: ProductoActualizar,
                         emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     """La existencia no se edita aquí: use /inventario/movimientos (entrada, salida o ajuste)."""
@@ -198,7 +198,7 @@ def actualizar_producto(producto_id: UUID, payload: ProductoActualizar,
     return inventario.a_respuesta(p)
 
 
-@router.delete("/catalogo/productos/{producto_id}", status_code=204)
+@router.delete("/catalogo/productos/{producto_id}", status_code=204, dependencies=[Depends(permiso("catalogo"))])
 def eliminar_producto(producto_id: UUID, emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     """Lo quita del catálogo; su historial de inventario se conserva."""
     _producto(db, emisor, producto_id).activo = False
@@ -225,7 +225,7 @@ def listar_categorias(emisor: Emisor = Depends(emisor_facturacion_web), db: Sess
     return [_categoria_respuesta(db, c) for c in lista]
 
 
-@router.post("/catalogo/categorias", status_code=201)
+@router.post("/catalogo/categorias", status_code=201, dependencies=[Depends(permiso("catalogo"))])
 def crear_categoria(payload: CategoriaRequest, emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     c = Categoria(emisor_id=emisor.id, nombre=payload.nombre.strip())
     db.add(c)
@@ -237,7 +237,7 @@ def crear_categoria(payload: CategoriaRequest, emisor: Emisor = Depends(emisor_f
     return _categoria_respuesta(db, c)
 
 
-@router.put("/catalogo/categorias/{categoria_id}")
+@router.put("/catalogo/categorias/{categoria_id}", dependencies=[Depends(permiso("catalogo"))])
 def renombrar_categoria(categoria_id: UUID, payload: CategoriaRequest,
                         emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     c = _categoria(db, emisor, categoria_id)
@@ -250,7 +250,7 @@ def renombrar_categoria(categoria_id: UUID, payload: CategoriaRequest,
     return _categoria_respuesta(db, c)
 
 
-@router.delete("/catalogo/categorias/{categoria_id}", status_code=204)
+@router.delete("/catalogo/categorias/{categoria_id}", status_code=204, dependencies=[Depends(permiso("catalogo"))])
 def eliminar_categoria(categoria_id: UUID, emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     """Los productos quedan sin categoría; los descuentos de la categoría se eliminan."""
     db.delete(_categoria(db, emisor, categoria_id))
@@ -295,7 +295,7 @@ def listar_descuentos(vigentes: bool = Query(default=False, description="Solo ac
     return [_descuento_respuesta(d) for d in db.scalars(query)]
 
 
-@router.post("/catalogo/descuentos", status_code=201)
+@router.post("/catalogo/descuentos", status_code=201, dependencies=[Depends(permiso("catalogo"))])
 def crear_descuento(payload: DescuentoRequest, emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     d = Descuento(emisor_id=emisor.id, **_validar_descuento(db, emisor, payload))
     db.add(d)
@@ -303,7 +303,7 @@ def crear_descuento(payload: DescuentoRequest, emisor: Emisor = Depends(emisor_f
     return _descuento_respuesta(d)
 
 
-@router.put("/catalogo/descuentos/{descuento_id}")
+@router.put("/catalogo/descuentos/{descuento_id}", dependencies=[Depends(permiso("catalogo"))])
 def actualizar_descuento(descuento_id: UUID, payload: DescuentoRequest,
                          emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     d = db.get(Descuento, str(descuento_id))
@@ -315,7 +315,7 @@ def actualizar_descuento(descuento_id: UUID, payload: DescuentoRequest,
     return _descuento_respuesta(d)
 
 
-@router.delete("/catalogo/descuentos/{descuento_id}", status_code=204)
+@router.delete("/catalogo/descuentos/{descuento_id}", status_code=204, dependencies=[Depends(permiso("catalogo"))])
 def eliminar_descuento(descuento_id: UUID, emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     d = db.get(Descuento, str(descuento_id))
     if d is None or d.emisor_id != emisor.id:
@@ -345,7 +345,7 @@ def listar_movimientos(
     return [inventario.movimiento_a_dict(m) for m in db.scalars(query)]
 
 
-@router.post("/inventario/movimientos", status_code=201)
+@router.post("/inventario/movimientos", status_code=201, dependencies=[Depends(permiso("catalogo"))])
 def registrar_movimiento(payload: MovimientoRequest, principal: Principal = Depends(autenticar),
                          emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db)):
     """Entrada de mercadería, salida (merma, uso interno) o ajuste por conteo físico."""
@@ -395,7 +395,7 @@ def _tipo_imagen(datos: bytes) -> str | None:
     return None
 
 
-@router.put("/empresa/logo", status_code=204)
+@router.put("/empresa/logo", status_code=204, dependencies=[Depends(permiso("configuracion"))])
 def cargar_logo(request: Request, archivo: UploadFile = File(..., description="PNG o JPEG, máximo 300 KB"),
                 principal: Principal = Depends(autenticar),
                 emisor: Emisor = Depends(emisor_actual), db: Session = Depends(get_db)):
@@ -426,7 +426,7 @@ def obtener_logo(emisor: Emisor = Depends(emisor_actual)):
                     headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
-@router.delete("/empresa/logo", status_code=204)
+@router.delete("/empresa/logo", status_code=204, dependencies=[Depends(permiso("configuracion"))])
 def eliminar_logo(request: Request, principal: Principal = Depends(autenticar),
                   emisor: Emisor = Depends(emisor_actual), db: Session = Depends(get_db)):
     emisor.logo, emisor.logo_tipo = None, None

@@ -244,7 +244,7 @@ Todo queda en la **bitácora del comprobante** (Comprobantes → detalle → eve
 | **Impuestos** | Todas las tarifas de IVA, exentos, no sujetos, exoneraciones, bienes usados, IVA cobrado en fábrica, IVA devuelto, selectivo de consumo, impuestos específicos, descuentos, 10 % de servicio. |
 | **Recepción** | Subir el XML de la factura de un proveedor, verificar su firma y responder: **aceptar, aceptar parcialmente o rechazar** (Mensaje Receptor). |
 | **Consultas a Hacienda** | Contribuyentes (avisa si es moroso u omiso), actividades, exoneraciones, CABYS, tipo de cambio. Se guardan localmente y se refrescan cada 15 días; si Hacienda está caída se usan los datos guardados. |
-| **Reportes** | Resumen de IVA mensual (insumo para la D-104) y libros de ventas y compras en CSV (Excel). |
+| **Contabilidad (solo contadores)** | Catálogo de cuentas, asientos automáticos desde los comprobantes, libro diario y mayor, estados financieros, cierre de meses, resumen de IVA, borrador D-104 y libros de ventas y compras. |
 | **Facturación en línea** | Catálogo de clientes, productos e **inventario con kárdex** y costo promedio. |
 | **Integraciones** | API REST, **webhooks** firmados (HMAC) y flujo listo para **n8n** (`docs/n8n/`). |
 
@@ -260,7 +260,7 @@ Todo queda en la **bitácora del comprobante** (Comprobantes → detalle → eve
 | **Facturar** | *Vender:* Factura rápida, Factura electrónica, Tiquete, Punto de venta. *Corregir una factura ya enviada:* Nota de crédito, Nota de débito. *Otros:* Proforma o cotización, Factura de compra, Factura de exportación. | Formulario en 3 pasos: 1) ¿A quién le factura? (cédula → datos de Hacienda), 2) ¿Qué vende? (productos, CABYS), 3) ¿Cómo le pagan? El total y *Firmar y enviar a Hacienda* quedan fijos abajo. Exoneración y opciones técnicas (sucursal, terminal, contingencia) están plegadas. |
 | **Documentos** | *Lo que vendí:* emitidos, facturas sin enviar, proformas, cierres de caja. *Lo que compré:* facturas de proveedores. *Cobros:* facturas por cobrar, recibos de pago. *Respaldo:* descargar XML y PDF. | Detalle: PDF, XML, estado, reenviar, anular, recibo de pago. |
 | **Clientes y productos** | Mis clientes, importar clientes, mis productos, inventario, categorías, descuentos, combos, importar productos. | Catálogos de la facturación en línea; inventario y kárdex. |
-| **Reportes** | Reporte de IVA (D-104), reportes de clientes y productos, consultas a Hacienda. | IVA del mes y libros en Excel. |
+| **Reportes** | Reportes de clientes y productos, consultas a Hacienda. | El IVA y la contabilidad los ve el contador en su módulo. |
 | **Configuración** | Datos de la empresa, actividad económica, saldo de documentos, mi usuario, usuarios. | Cambiar contraseña y activar la verificación en dos pasos. |
 
 **Menú solo del administrador:**

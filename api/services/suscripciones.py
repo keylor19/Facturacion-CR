@@ -69,11 +69,21 @@ def estado(db: Session, emisor: Emisor, servicio: str) -> dict:
         situacion = "EN_GRACIA"
     else:
         situacion = "VENCIDO"
+    # Mensualidad pedida por el cliente (factura mensual): activa mientras esté al día
+    contratado = None
+    if cobrable and habilitado and control_activo():
+        from api.services import mensualidades   # evita importación circular
+        if mensualidades.se_cobra(db, servicio):
+            cliente = mensualidades.clave_cliente(emisor_id=emisor.id)
+            contratado = mensualidades.contrato(db, cliente, servicio)
+            if contratado is not None:
+                situacion = "SUSPENDIDO" if mensualidades.moroso(db, cliente) else "ACTIVO"
     regalia = bool(hasta and hasta - ahora > timedelta(days=365 * 50))
     return {
         "servicio": servicio, "nombre": SERVICIOS[servicio], "habilitado": habilitado, "con_mensualidad": cobrable,
         "vence": None if regalia else hasta, "regalia": regalia,
         "estado": situacion, "activo": situacion in ("ACTIVO", "POR_VENCER", "EN_GRACIA"),
+        "mensualidad": bool(contratado),
     }
 
 
@@ -91,7 +101,13 @@ def motivo_inactivo(db: Session, emisor: Emisor, servicio: str) -> str:
     if e["estado"] == "VENCIDO":
         fecha = e["vence"].astimezone(zona_cr()).strftime("%d/%m/%Y")
         return f"El servicio de {nombre} venció el {fecha}; contacte a su proveedor para renovarlo"
+    if e["estado"] == "SUSPENDIDO":
+        from api.services import mensualidades
+        return mensualidades.motivo(db, servicio, emisor_id=emisor.id)
     if e["estado"] == "SIN_CONTRATAR":
+        from api.services import mensualidades
+        if mensualidades.se_cobra(db, servicio):
+            return mensualidades.motivo(db, servicio, emisor_id=emisor.id)
         return f"La empresa no tiene contratado el servicio de {nombre}; contacte a su proveedor"
     return f"El servicio de {nombre} no está activo para esta empresa; contacte a su proveedor"
 

@@ -77,6 +77,15 @@ class Settings(BaseSettings):
     # --- Callback público (Hacienda debe poder alcanzar esta URL por HTTPS) ---
     CALLBACK_BASE_URL: str = "https://tu-dominio.com"
     CALLBACK_TOKEN: str = ""
+    # Dirección pública del sistema para los enlaces de descarga que se envían por WhatsApp
+    # (vacío = la misma de CALLBACK_BASE_URL)
+    URL_PUBLICA: str = ""
+
+    # --- Entrar con Google o Microsoft (vacío = no se ofrece ese botón) ---
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    MICROSOFT_CLIENT_ID: str = ""
+    MICROSOFT_CLIENT_SECRET: str = ""
 
     # --- Seguridad de la API ---
     # API keys de ADMINISTRADOR (arranque). Las llaves de los sistemas cliente

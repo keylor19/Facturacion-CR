@@ -36,7 +36,8 @@ def test_login_y_uso_de_la_sesion(db, emisor, app_client):
 
     assert app_client.post("/api/v1/facturas", json=factura_payload(), headers=h).status_code == 202
     assert app_client.get("/api/v1/emisores", headers=h).status_code == 403   # no es admin
-    assert app_client.get("/api/v1/usuarios", headers=h).status_code == 403
+    # El dueño (rol por defecto) solo ve los usuarios de su empresa
+    assert [u["email"] for u in app_client.get("/api/v1/usuarios", headers=h).json()] == ["ana@contadores.cr"]
 
     assert app_client.post("/api/v1/auth/logout", headers=h).status_code == 204
     assert app_client.get("/api/v1/facturas", headers=h).status_code == 401

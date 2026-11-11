@@ -13,11 +13,12 @@ from sqlalchemy.orm import Session
 from api.models.database import Borrador, Emisor, get_db
 from api.models.schemas import BorradorActualizar, BorradorCrear, BorradorResponse, FacturaResponse
 from api.routes.facturas import _emitir
-from api.security import Principal, autenticar, emisor_facturacion_web
+from api.security import Principal, autenticar, emisor_facturacion_web, permiso
 from api.services import auditoria, borradores
 from api.services.fechas import ahora_cr
 
-router = APIRouter(prefix="/api/v1/borradores", tags=["facturación en línea: proformas y preliminares"])
+router = APIRouter(prefix="/api/v1/borradores", tags=["facturación en línea: proformas y preliminares"],
+                   dependencies=[Depends(permiso("emitir"))])
 
 
 def _buscar(db: Session, emisor: Emisor, borrador_id: UUID) -> Borrador:

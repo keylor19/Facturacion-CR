@@ -1,0 +1,2 @@
+[    9876ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ http://localhost:8001/api/v1/contabilidad/reportes/balance?fecha=2026-11-10:0
+[   16043ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ http://localhost:8001/api/v1/contabilidad/empresas:0

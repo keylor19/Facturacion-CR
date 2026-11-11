@@ -1,7 +1,8 @@
 // Saldo de documentos de la empresa: paquetes comprados, consumo y servicios contratados (API, panel web).
 import { api } from '../api.js';
 import { h, vaciar, dinero, fecha, tabla, aviso } from '../dom.js';
-import { contexto } from '../app.js';
+import { contexto, puede } from '../app.js';
+import { seccionMisCompras } from './comprar.js';
 
 const ESTADO_PAQUETE = { VIGENTE: 'ACEPTADO', AGOTADO: 'PENDIENTE', VENCIDO: 'CONTINGENCIA', ANULADO: 'RECHAZADO' };
 
@@ -52,9 +53,11 @@ export function kpisSaldo(r) {
 
 export async function vistaSaldo(cont) {
   const [r, movs] = await Promise.all([api('/saldo'), api('/saldo/movimientos?limit=200')]);
+  const refrescar = () => vistaSaldo(cont);
+  const compras = !contexto.esAdmin && puede('configuracion') ? await seccionMisCompras(refrescar).catch(() => null) : null;
   const servicios = r.control_suscripciones ? h('section', { class: 'tarjeta' }, h('h2', {}, 'Servicios contratados'),
     tablaServicios(r.servicios.filter((s) => s.habilitado || s.vence)),
-    h('p', { class: 'suave' }, 'La conexión por API se paga solo con documentos. El panel web tiene su propia mensualidad; para renovarla, contacte a su proveedor.')) : null;
+    h('p', { class: 'suave' }, 'La conexión por API se paga solo con documentos. El panel web tiene su propia mensualidad: puede renovarla abajo, en «Comprar documentos», o con su proveedor.')) : null;
   if (!r.control_activo) {
     vaciar(cont, h('h1', {}, 'Mi saldo'), aviso('El control de saldo está desactivado: la facturación no tiene límite.', 'info'), servicios);
     return;
@@ -63,9 +66,10 @@ export async function vistaSaldo(cont) {
     h('h1', {}, 'Mi saldo de documentos'),
     servicios,
     r.disponible <= 0
-      ? aviso('Su saldo está agotado: no puede emitir comprobantes. Contacte a su proveedor para adquirir un paquete.', 'error')
+      ? aviso('Su saldo está agotado: no puede emitir comprobantes. Compre un paquete abajo o contacte a su proveedor.', 'error')
       : r.alerta ? aviso(`Quedan pocos documentos (${r.disponible}). Adquiera un paquete para no interrumpir la facturación.`, 'alerta') : null,
     kpisSaldo(r),
+    compras,
     h('p', { class: 'suave' }, 'Cada comprobante firmado y enviado a Hacienda (facturas, tiquetes, notas, recibos de pago y respuestas a proveedores) consume 1 documento. Los reintentos no consumen.'),
     h('section', { class: 'tarjeta' }, h('h2', {}, 'Paquetes adquiridos'), tablaPaquetes(r.paquetes)),
     h('section', { class: 'tarjeta' }, h('h2', {}, 'Consumo reciente'),

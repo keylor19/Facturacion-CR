@@ -53,7 +53,7 @@ def health_detalle(response: Response, db: Session = Depends(get_db)):
     chequeos = _chequeos(db)
     limite = utcnow() + timedelta(days=s.DIAS_ALERTA_CERTIFICADO)
     certificados = []
-    for e in db.scalars(select(Emisor).where(Emisor.activo.is_(True)).order_by(Emisor.nombre)):
+    for e in db.scalars(select(Emisor).where(Emisor.activo.is_(True), Emisor.solo_contabilidad.is_(False)).order_by(Emisor.nombre)):
         if e.cert_vence is None:
             estado = "sin_certificado"
         elif e.cert_vence < utcnow():

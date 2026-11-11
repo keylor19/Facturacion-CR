@@ -26,6 +26,7 @@ services:
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD}
       DIAS_RETENCION: ${DIAS_RETENCION_RESPALDO:-14}
+      ALERTA_URL: ${ALERTA_URL:-}
     volumes:
       - ./respaldos:/respaldos
       - ./deploy/respaldo.sh:/respaldo.sh:ro

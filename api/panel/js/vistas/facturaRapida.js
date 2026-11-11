@@ -5,6 +5,7 @@ import { api } from '../api.js';
 import { h, vaciar, dinero, conBoton, toast, campo, opciones, aviso } from '../dom.js';
 import { MEDIOS_PAGO, TARIFAS_IVA } from '../catalogos.js';
 import { dialogoElegirCliente } from './emitir.js';
+import { controlesTiquete, botonWhatsapp } from '../impresion.js';
 import { descuentosVigentes, mejorDescuento } from '../promociones.js';
 
 const conIva = (p) => Number(p.precio_unitario) * (1 + (TARIFAS_IVA[p.codigo_tarifa_iva]?.[1] || 0) / 100);
@@ -22,6 +23,8 @@ export function crearVenta({ enviar = (datos) => api('/facturas', { method: 'POS
   const recibido = h('input', { type: 'number', step: '0.01', min: '0', placeholder: 'Opcional' });
   const vuelto = h('strong');
   const datosCliente = h('div');
+  // Tiquete con solo el nombre del cliente (sin cédula)
+  const nombreTiquete = h('input', { type: 'text', maxlength: '100', placeholder: 'Opcional' });
   const resultado = h('div');
   const emitir = h('button', { type: 'button', class: 'primario grande' }, 'Emitir');
 
@@ -113,6 +116,7 @@ export function crearVenta({ enviar = (datos) => api('/facturas', { method: 'POS
         cliente.correo ? [h('br'), h('span', { class: 'suave' }, cliente.correo)] : null),
       h('button', { type: 'button', class: 'chico', onclick: () => { cliente = null; pintarCliente(); } }, 'Quitar cliente (emitir tiquete)')]
       : [h('p', { class: 'suave' }, 'Consumidor final: se emite tiquete electrónico.'),
+        h('label', {}, 'Nombre del cliente (sin cédula)', nombreTiquete),
         h('button', { type: 'button', onclick: () => dialogoElegirCliente((c) => { cliente = c; pintarCliente(); }) }, 'Elegir de mis clientes (factura)')]);
     pintar();
   }
@@ -138,6 +142,8 @@ export function crearVenta({ enviar = (datos) => api('/facturas', { method: 'POS
       datos.receptor = { nombre: cliente.nombre, tipo_identificacion: cliente.tipo_identificacion, numero_identificacion: cliente.numero_identificacion };
       if (cliente.correo) datos.receptor.correo = cliente.correo;
       if (cliente.codigo_actividad) datos.codigo_actividad_receptor = cliente.codigo_actividad;
+    } else if (nombreTiquete.value.trim()) {
+      datos.receptor = { nombre: nombreTiquete.value.trim() };
     }
     try {
       const r = await enviar(datos);
@@ -145,10 +151,11 @@ export function crearVenta({ enviar = (datos) => api('/facturas', { method: 'POS
       lineas.length = 0;
       cliente = null;
       recibido.value = '';
+      nombreTiquete.value = '';
       medio.value = '01';
       pintarCliente();
       vaciar(resultado, h('div', { class: 'aviso ok' }, 'Comprobante emitido. ',
-        h('a', { href: `#/comprobantes/${r.factura_id}` }, 'Ver comprobante e imprimir PDF')));
+        h('a', { href: `#/comprobantes/${r.factura_id}` }, 'Ver comprobante'), ' ', controlesTiquete(r.factura_id), ' ', botonWhatsapp(r.factura_id)));
       q.focus();
       alEmitir(r);
     } catch (e) {

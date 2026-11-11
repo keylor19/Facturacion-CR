@@ -1,0 +1,14 @@
+{
+  "name": "Facturación Electrónica CR",
+  "short_name": "Facturación",
+  "description": "Facturas, tiquetes, punto de venta y reportes de IVA para Costa Rica",
+  "lang": "es-CR",
+  "start_url": "/panel/#/tablero",
+  "scope": "/panel/",
+  "display": "standalone",
+  "background_color": "#f3f6fb",
+  "theme_color": "#1f4e79",
+  "icons": [
+    { "src": "img/icono.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

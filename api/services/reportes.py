@@ -145,6 +145,8 @@ def resumen_iva(db: Session, emisor: Emisor, anio: int, mes: int) -> dict:
         totales_ventas["gravado"] += f.total_gravado * factor
         totales_ventas["exento"] += f.total_exento * factor
         totales_ventas["exonerado"] += f.total_exonerado * factor
+        totales_ventas["no_sujeto"] += (f.total_no_sujeto or CERO) * factor
+        totales_ventas["iva_devuelto"] += (f.total_iva_devuelto or CERO) * factor
         totales_ventas["iva"] += f.monto_impuesto * factor
         totales_ventas["otros_cargos"] += f.total_otros_cargos * factor
         totales_ventas["total"] += f.monto_total * factor
@@ -230,6 +232,75 @@ def resumen_iva(db: Session, emisor: Emisor, anio: int, mes: int) -> dict:
         "advertencia": "Insumo para la declaración D-104; revisar prorrata, proporcionalidad y demás ajustes.",
     }
 
+
+
+NOMBRE_TARIFA = {
+    "01": "Tarifa 0% (exportaciones y otros con derecho a crédito)", "02": "Tarifa reducida 1%",
+    "03": "Tarifa reducida 2%", "04": "Tarifa reducida 4%", "05": "Transitorio 0%", "06": "Transitorio 4%",
+    "07": "Transitorio 8%", "08": "Tarifa general 13%", "09": "Tarifa reducida 0,5%", "10": "Exenta",
+    "11": "Tarifa 0% sin derecho a crédito", "sin_iva": "Sin impuesto",
+}
+NOMBRE_CONDICION = {
+    "01": "Genera crédito de IVA", "02": "Genera crédito parcial", "03": "Bienes de capital",
+    "04": "Gasto corriente (no genera crédito)", "05": "Proporcionalidad", "sin_impuesto": "Sin condición indicada",
+}
+
+
+def borrador_d104(db: Session, emisor: Emisor, anio: int, mes: int) -> dict:
+    """
+    El resumen de IVA ordenado como la declaración D-104 en TRIBU-CR: ventas por
+    tarifa (débito), compras por condición (crédito), IVA devuelto y el resultado.
+    Los nombres siguen los conceptos del formulario; el contador copia cada monto.
+    """
+    r = resumen_iva(db, emisor, anio, mes)
+    v = r["ventas"]
+    ventas = [{"concepto": f"Ventas: {NOMBRE_TARIFA.get(t['codigo_tarifa_iva'], t['codigo_tarifa_iva'])}",
+               "codigo_tarifa_iva": t["codigo_tarifa_iva"], "base": t["base"], "iva": t["iva"]}
+              for t in v["por_tarifa"]]
+    if v.get("exonerado"):
+        ventas.append({"concepto": "Ventas exoneradas (monto exonerado)", "base": v["exonerado"], "iva": _r(CERO)})
+    if v.get("no_sujeto"):
+        ventas.append({"concepto": "Ventas no sujetas", "base": v["no_sujeto"], "iva": _r(CERO)})
+    compras = [{"concepto": f"Compras: {NOMBRE_CONDICION.get(c['condicion_impuesto'], c['condicion_impuesto'])}",
+                "documentos": c["documentos"], "total": c["total"], "iva": c["iva"],
+                "iva_acreditable": c["iva_acreditable"]}
+               for c in r["compras"]["por_condicion_impuesto"]]
+    fec = r["compras"]["facturas_compra_emitidas"]
+    debito = Decimal(r["iva_debito_fiscal"])
+    credito = Decimal(r["iva_credito_fiscal"])
+    devuelto = Decimal(v.get("iva_devuelto") or 0)
+    resultado = debito - credito - devuelto
+    return {
+        "periodo": r["periodo"], "emisor": r["emisor"], "moneda": "CRC",
+        "ventas": ventas,
+        "compras": compras,
+        "facturas_compra": {"concepto": "Facturas electrónicas de compra emitidas (proveedores no inscritos)", **fec},
+        "recibos_pago": r["recibos_pago"],
+        "totales": {
+            "iva_debito_fiscal": _r(debito), "iva_credito_fiscal": _r(credito), "iva_devuelto": _r(devuelto),
+            "impuesto_a_pagar": _r(max(resultado, CERO)), "saldo_a_favor": _r(max(-resultado, CERO)),
+        },
+        "rectificaciones_pendientes": r["rectificaciones_pendientes"],
+        "advertencias": [
+            "Borrador hecho con los comprobantes aceptados por Hacienda en el sistema. Revise compras que no pasaron por aquí.",
+            "No incluye prorrata, proporcionalidad del crédito, saldos a favor de meses anteriores ni retenciones de tarjetas.",
+            "El IVA de los recibos de pago (ventas a crédito 08 y 10) se muestra aparte: el contador decide en qué mes se declara.",
+        ],
+    }
+
+
+def d104_csv(db: Session, emisor: Emisor, anio: int, mes: int) -> str:
+    b = borrador_d104(db, emisor, anio, mes)
+    filas = [["Sección", "Concepto", "Base o total", "IVA", "IVA acreditable"]]
+    filas += [["Ventas (débito)", x["concepto"], x["base"], x["iva"], ""] for x in b["ventas"]]
+    filas += [["Compras (crédito)", x["concepto"], x["total"], x["iva"], x["iva_acreditable"]] for x in b["compras"]]
+    t = b["totales"]
+    filas += [["Resultado", "IVA débito fiscal", "", t["iva_debito_fiscal"], ""],
+              ["Resultado", "IVA crédito fiscal", "", t["iva_credito_fiscal"], ""],
+              ["Resultado", "IVA devuelto (servicios de salud con tarjeta)", "", t["iva_devuelto"], ""],
+              ["Resultado", "Impuesto a pagar", "", t["impuesto_a_pagar"], ""],
+              ["Resultado", "Saldo a favor", "", t["saldo_a_favor"], ""]]
+    return _csv(filas[0], filas[1:])
 
 def _celda_segura(valor):
     """

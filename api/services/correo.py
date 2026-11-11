@@ -14,6 +14,11 @@ class CorreoError(Exception):
     pass
 
 
+def remitente(emisor) -> str:
+    """«Nombre de la empresa <SMTP_FROM>»: el cliente ve quién le escribe; las respuestas van a Reply-To."""
+    return formataddr((emisor.nombre_comercial or emisor.nombre, get_settings().SMTP_FROM))
+
+
 def construir_mensaje(factura: Factura, destinatarios: list[str]) -> EmailMessage:
     s = get_settings()
     emisor = factura.emisor
@@ -21,7 +26,7 @@ def construir_mensaje(factura: Factura, destinatarios: list[str]) -> EmailMessag
 
     msg = EmailMessage()
     msg["Subject"] = f"{tipo} {factura.numero_consecutivo} - {emisor.nombre}"
-    msg["From"] = formataddr((emisor.nombre_comercial or emisor.nombre, s.SMTP_FROM))
+    msg["From"] = remitente(emisor)
     msg["To"] = ", ".join(destinatarios)
     msg["Reply-To"] = emisor.correo
     msg["Message-ID"] = make_msgid(domain=s.SMTP_FROM.split("@")[-1] if "@" in s.SMTP_FROM else None)

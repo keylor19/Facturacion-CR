@@ -2,8 +2,10 @@
 // crédito por motivo normal o error material, recibos de pago de ventas a crédito).
 import { api, abrir, descargar } from '../api.js';
 import {
-  h, vaciar, dinero, fecha, badge, tabla, modal, conBoton, toast, campo, opciones, TIPOS, ESTADOS,
+  h, vaciar, dinero, fecha, badge, tabla, modal, conBoton, toast, campo, opciones, aviso, TIPOS, ESTADOS,
 } from '../dom.js';
+import { controlesTiquete, botonWhatsapp } from '../impresion.js';
+import { puede } from '../app.js';
 import { MEDIOS_PAGO, CONDICIONES_VENTA, SITUACIONES, CODIGOS_REFERENCIA } from '../catalogos.js';
 
 const POR_PAGINA = 50;
@@ -68,6 +70,8 @@ export async function vistaDetalleComprobante(cont, id) {
 
   const acciones = [
     h('button', { type: 'button', onclick: (e) => conBoton(e.target, () => abrir(`/facturas/${id}/pdf`)) }, 'Ver PDF'),
+    controlesTiquete(id),
+    botonWhatsapp(id),
     h('button', { type: 'button', onclick: (e) => conBoton(e.target, () => descargar(`/facturas/${id}/xml?tipo=firmado`, `${c.clave}.xml`)) }, 'XML firmado'),
   ];
   if (['ACEPTADO', 'RECHAZADO'].includes(c.estado)) {
@@ -87,7 +91,7 @@ export async function vistaDetalleComprobante(cont, id) {
   }
   if (c.estado === 'ACEPTADO') {
     acciones.push(h('button', { type: 'button', onclick: () => dialogoCorreo(id) }, 'Enviar por correo'));
-    if (ANULABLES.includes(c.tipo_documento)) {
+    if (ANULABLES.includes(c.tipo_documento) && puede('anular')) {
       acciones.push(h('button', { type: 'button', class: 'peligro', onclick: () => dialogoAnular(id, c) }, 'Anular con nota de crédito'));
     }
   }
@@ -113,6 +117,12 @@ export async function vistaDetalleComprobante(cont, id) {
     ? h('div', { class: `aviso ${c.estado === 'RECHAZADO' ? 'error' : c.estado === 'ACEPTADO' ? 'ok' : 'alerta'}` },
       h('strong', {}, 'Mensaje de Hacienda: '), c.mensaje_hacienda)
     : null;
+  // Solo se anula lo que Hacienda ya aceptó: se explica por qué todavía no aparece el botón
+  const avisoAnular = ANULABLES.includes(c.tipo_documento) && c.estado !== 'ACEPTADO' && puede('anular')
+    ? aviso(c.estado === 'RECHAZADO'
+      ? 'Hacienda rechazó este comprobante: no tiene validez y no hace falta anularlo. Corrija y emita uno nuevo.'
+      : 'Se podrá anular cuando Hacienda lo acepte. Use «Consultar estado» y luego «Actualizar» para ver si ya respondió.', 'info')
+    : null;
 
   vaciar(cont,
     h('div', { class: 'encabezado' },
@@ -120,6 +130,7 @@ export async function vistaDetalleComprobante(cont, id) {
         h('h1', {}, `${TIPOS[c.tipo_documento]} ${c.numero_consecutivo} `, badge(c.estado))),
       h('div', { class: 'acciones' }, acciones, h('button', { type: 'button', onclick: refrescar }, '↻ Actualizar'))),
     mensaje,
+    avisoAnular,
     h('div', { class: 'campos dos' },
       h('section', { class: 'tarjeta' }, h('h2', {}, 'Datos'),
         h('dl', { class: 'datos' },

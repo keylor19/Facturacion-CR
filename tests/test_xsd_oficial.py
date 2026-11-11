@@ -41,6 +41,8 @@ def _caso(nombre):
                                                                     {"codigo": "01", "codigo_tarifa_iva": "08"}]}]
     elif nombre == "tiquete":
         p.update(tipo_documento="04", receptor=None)
+    elif nombre == "tiquete_solo_nombre":
+        p.update(tipo_documento="04", receptor={"nombre": "Doña María"})
     elif nombre == "nota_credito":
         p.update(tipo_documento="03", referencia=REF)
     elif nombre == "nota_debito":
@@ -72,7 +74,7 @@ def _xsd_dir(monkeypatch):
     monkeypatch.setattr(get_settings(), "XSD_DIR", XSD_DIR)
 
 
-@pytest.mark.parametrize("nombre", ["factura", "factura_completa", "exoneracion", "selectivo", "tiquete",
+@pytest.mark.parametrize("nombre", ["factura", "factura_completa", "exoneracion", "selectivo", "tiquete", "tiquete_solo_nombre",
                                     "nota_credito", "nota_debito", "compra", "exportacion",
                                     "nota_credito_error_material", "nota_debito_error_material",
                                     "nota_credito_a_exportacion", "sustituye_por_error_material", "sustituye_rechazado"])

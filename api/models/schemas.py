@@ -184,8 +184,9 @@ class PersonaRequest(BaseModel):
             self.numero_identificacion = validar_numero_identificacion(
                 self.tipo_identificacion, self.numero_identificacion
             )
-        else:
-            raise ValueError("Indique numero_identificacion o identificacion_extranjero")
+        elif not self.nombre:
+            # Sin cédula basta el nombre, pero solo en tiquetes y notas (lo valida FacturaRequest)
+            raise ValueError("Indique numero_identificacion o identificacion_extranjero, o al menos el nombre")
         return self
 
     @property
@@ -461,8 +462,14 @@ class FacturaRequest(BaseModel):
             raise ValueError("Este comprobante requiere receptor (use tipo_documento 04 para tiquete)")
         if self.receptor is not None and not self.receptor.nombre:
             self.receptor.nombre = NOMBRE_RECEPTOR_GENERICO
+        # Hacienda permite un receptor solo con nombre en tiquete y notas; la factura lo exige identificado
+        if self.receptor is not None and not self.receptor.numero_identificacion and t not in ("02", "03", "04"):
+            raise ValueError("La factura electrónica requiere la cédula del cliente. "
+                             "Para un cliente con solo el nombre use tiquete (tipo_documento 04)")
         if self.proveedor is not None and not self.proveedor.nombre:
             raise ValueError("Indique el nombre del proveedor")
+        if self.proveedor is not None and not self.proveedor.numero_identificacion:
+            raise ValueError("Indique la identificación del proveedor")
         if t == "08":
             if self.proveedor is None:
                 raise ValueError("La factura de compra (08) requiere 'proveedor'")
@@ -792,6 +799,8 @@ class UsuarioResponse(BaseModel):
     activo: bool
     ultimo_login: Optional[datetime]
     dos_pasos: bool = False
+    rol: str = Field(default="dueno", description="dueno, contador o cajero (usuarios de una empresa)")
+    es_contador: bool = Field(default=False, description="Contador externo (solo contabilidad)")
 
 
 class CodigoRequest(BaseModel):
@@ -815,11 +824,14 @@ class UsuarioCrear(BaseModel):
     password: str = Field(min_length=10, max_length=200, description="Mínimo 10 caracteres")
     es_admin: bool = False
     emisor_id: Optional[str] = None
+    rol: Literal["dueno", "contador", "cajero"] = "dueno"
+    es_contador: bool = Field(default=False, description="Contador externo: lleva la contabilidad de las empresas que se le asignen")
 
     @model_validator(mode="after")
     def validar(self):
-        if self.es_admin == bool(self.emisor_id):
-            raise ValueError("Un usuario es administrador (todas las empresas) o de una empresa (emisor_id)")
+        # Sin emisor_id lo completa el API cuando quien crea es el dueño de la empresa
+        if sum([self.es_admin, self.es_contador, bool(self.emisor_id)]) > 1:
+            raise ValueError("Un usuario es administrador, contador o de una empresa (emisor_id): solo uno")
         return self
 
 
@@ -827,6 +839,7 @@ class UsuarioActualizar(BaseModel):
     nombre: Optional[str] = Field(default=None, min_length=1, max_length=100)
     password: Optional[str] = Field(default=None, min_length=10, max_length=200)
     activo: Optional[bool] = None
+    rol: Optional[Literal["dueno", "contador", "cajero"]] = None
 
 
 class CambioPasswordRequest(BaseModel):
@@ -1119,6 +1132,14 @@ class AjustesVentasRequest(BaseModel):
                                               description="Cuentas IBAN, SINPE Móvil… (van en los avisos al cliente)")
     contacto_ventas: Optional[str] = Field(default=None, max_length=200, description="Teléfono, WhatsApp o correo para comprar")
     correo_avisos: Optional[EmailStr] = Field(default=None, description="Recibe copia de cada aviso enviado a un cliente")
+    autoregistro: bool = Field(default=False, description="Permitir que una empresa se inscriba sola desde la página de entrada")
+    prueba_documentos: int = Field(default=20, ge=0, le=1000, description="Documentos gratis al inscribirse")
+    prueba_dias: int = Field(default=15, ge=0, le=90, description="Días gratis del sistema web al inscribirse")
+    precio_web_mensual: Optional[Decimal] = Field(default=None, gt=0, description="Precio por mes del sistema web en compras en línea")
+    moneda_web: Literal["CRC", "USD"] = Field(default="CRC", description="Moneda de todas las mensualidades")
+    precio_contabilidad_mensual: Optional[Decimal] = Field(default=None, gt=0, description="Contabilidad que lleva el dueño (vacío = sin costo)")
+    precio_contador_mensual: Optional[Decimal] = Field(default=None, gt=0, description="Cuenta de contador (vacío = sin costo)")
+    dias_para_pagar: int = Field(default=10, ge=1, le=60, description="Días para pagar la factura mensual antes de suspender")
 
     @field_validator("codigo_tarifa_iva")
     @classmethod

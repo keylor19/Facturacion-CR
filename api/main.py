@@ -14,7 +14,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from api.routes import administracion, auth, borradores, buzon, cajas, callback, catalogo, emisores, facturas, hacienda, health, recepcion, reportes, saldo
+from api.routes import (
+    administracion, auth, borradores, buzon, cajas, callback, catalogo, cobros, compras, contabilidad, emisores,
+    empresa, facturas, hacienda, health, publico, recepcion, recurrentes, registro, reportes, saldo, servicios,
+)
 from config.settings import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -65,7 +68,7 @@ if settings.cors_origins:
         allow_origins=settings.cors_origins,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "X-API-Key", "X-Emisor-Id", "Authorization"],
-        expose_headers=["X-Documentos-Disponibles", "Retry-After"],
+        expose_headers=["X-Documentos-Disponibles", "Retry-After", "X-Requiere-Servicio"],
     )
 
 app.include_router(auth.router)
@@ -78,6 +81,17 @@ app.include_router(saldo.admin)
 app.include_router(catalogo.router)
 app.include_router(borradores.router)
 app.include_router(cajas.router)
+app.include_router(cobros.router)
+app.include_router(recurrentes.router)
+app.include_router(publico.router)
+app.include_router(empresa.router)
+app.include_router(registro.router)
+app.include_router(registro.oauth_router)
+app.include_router(compras.router)
+app.include_router(compras.admin)
+app.include_router(contabilidad.router)
+app.include_router(servicios.router)
+app.include_router(servicios.admin)
 app.include_router(hacienda.router)
 app.include_router(emisores.router)
 app.include_router(administracion.router)

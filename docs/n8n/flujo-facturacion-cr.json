@@ -1095,12 +1095,12 @@
     },
     {
       "parameters": {
-        "content": "## 7. Cierre del mes para el contador (automático)\nEl día 1 a las 7:00 prepara el resumen de IVA y los libros de ventas y compras del mes anterior (Excel).\n\nConecte al final un nodo **Gmail / Send Email / Google Drive** para enviárselos al contador.",
-        "height": 180,
+        "content": "## 7. Respaldo del mes (automático)\nEl día 1 a las 7:00 descarga en un ZIP los XML del mes anterior (emitidos, recibidos y respuestas de Hacienda) con su índice en Excel. Hacienda exige guardarlos 5 años.\n\nConecte al final un nodo **Google Drive / Dropbox / Gmail** para guardarlo o mandárselo a su contador.",
+        "height": 200,
         "width": 560
       },
       "id": "f4c7a000-0000-4000-8000-000000000063",
-      "name": "7. Contador",
+      "name": "7. Respaldo",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
@@ -1132,7 +1132,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const hoy = new Date();\nconst d = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);\nreturn [{ json: { anio: d.getFullYear(), mes: d.getMonth() + 1, periodo: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` } }];"
+        "jsCode": "const hoy = new Date();\nconst d = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);\nconst fin = new Date(hoy.getFullYear(), hoy.getMonth(), 0);\nconst iso = (x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;\nreturn [{ json: { desde: iso(d), hasta: iso(fin), periodo: iso(d).slice(0, 7) } }];"
       },
       "id": "f4c7a000-0000-4000-8000-000000000065",
       "name": "Mes anterior",
@@ -1146,20 +1146,21 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://SU-DOMINIO/api/v1/reportes/resumen-iva?anio={{ $json.anio }}&mes={{ $json.mes }}",
+        "url": "=https://SU-DOMINIO/api/v1/reportes/documentos.zip?desde={{ $json.desde }}&hasta={{ $json.hasta }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
           "response": {
             "response": {
-              "neverError": true,
-              "fullResponse": true
+              "responseFormat": "file",
+              "outputPropertyName": "data"
             }
-          }
+          },
+          "timeout": 300000
         }
       },
       "id": "f4c7a000-0000-4000-8000-000000000066",
-      "name": "Resumen de IVA",
+      "name": "XML del mes (ZIP)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -1175,85 +1176,25 @@
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "=https://SU-DOMINIO/api/v1/reportes/ventas.csv?anio={{ $('Mes anterior').first().json.anio }}&mes={{ $('Mes anterior').first().json.mes }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "options": {
-          "response": {
-            "response": {
-              "responseFormat": "file",
-              "outputPropertyName": "data"
-            }
-          }
-        }
+        "jsCode": "const { periodo } = $('Mes anterior').first().json;\nconst zip = $input.first().binary.data;\nzip.fileName = `comprobantes-${periodo}.zip`;\nreturn [{ json: { asunto: `Comprobantes electrónicos de ${periodo}`, periodo }, binary: { data: zip } }];"
       },
       "id": "f4c7a000-0000-4000-8000-000000000067",
-      "name": "Libro de ventas",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        720,
-        3160
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "facturacion-cr-api",
-          "name": "Facturación CR (API key)"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "=https://SU-DOMINIO/api/v1/reportes/compras.csv?anio={{ $('Mes anterior').first().json.anio }}&mes={{ $('Mes anterior').first().json.mes }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "options": {
-          "response": {
-            "response": {
-              "responseFormat": "file",
-              "outputPropertyName": "data"
-            }
-          }
-        }
-      },
-      "id": "f4c7a000-0000-4000-8000-000000000068",
-      "name": "Libro de compras",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        960,
-        3160
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "facturacion-cr-api",
-          "name": "Facturación CR (API key)"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "const { periodo } = $('Mes anterior').first().json;\nconst iva = $('Resumen de IVA').first().json.body || {};\nconst ventas = $('Libro de ventas').first().binary.data;\nconst compras = $('Libro de compras').first().binary.data;\nventas.fileName = `ventas-${periodo}.csv`;\ncompras.fileName = `compras-${periodo}.csv`;\nconst texto = [\n  `Cierre de ${periodo}`,\n  `IVA débito (ventas): ${iva.iva_debito_fiscal}`,\n  `IVA crédito (compras): ${iva.iva_credito_fiscal}`,\n  `IVA neto estimado: ${iva.iva_neto_estimado}`,\n  'Adjuntos: libros de ventas y compras (Excel).',\n].join('\\n');\nreturn [{ json: { asunto: `Facturación ${periodo}: libros e IVA`, texto, resumen_iva: iva }, binary: { ventas, compras } }];"
-      },
-      "id": "f4c7a000-0000-4000-8000-000000000069",
-      "name": "Armar envío al contador",
+      "name": "Nombrar respaldo",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1200,
+        720,
         3160
       ]
     },
     {
       "parameters": {},
-      "id": "f4c7a000-0000-4000-8000-000000000070",
-      "name": "Enviar al contador (agregue Gmail o correo)",
+      "id": "f4c7a000-0000-4000-8000-000000000068",
+      "name": "Guardar o enviar (agregue Drive o correo)",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        1440,
+        960,
         3160
       ]
     },
@@ -1263,7 +1204,7 @@
         "height": 220,
         "width": 620
       },
-      "id": "f4c7a000-0000-4000-8000-000000000071",
+      "id": "f4c7a000-0000-4000-8000-000000000069",
       "name": "8. Avisos",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -1281,7 +1222,7 @@
           "rawBody": true
         }
       },
-      "id": "f4c7a000-0000-4000-8000-000000000073",
+      "id": "f4c7a000-0000-4000-8000-000000000071",
       "name": "Webhook avisos",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -1289,13 +1230,13 @@
         0,
         3640
       ],
-      "webhookId": "f4c7a000-0000-4000-8000-000000000072"
+      "webhookId": "f4c7a000-0000-4000-8000-000000000070"
     },
     {
       "parameters": {
         "jsCode": "const crypto = require('crypto');\nconst SECRETO = 'PEGUE_AQUI_EL_SECRETO_DEL_WEBHOOK';\nconst item = $input.first();\nconst firma = item.json.headers['x-facturacion-firma'] || '';\nlet cuerpo;\ntry {\n  cuerpo = await this.helpers.getBinaryDataBuffer(0, 'data');\n} catch (e) {\n  cuerpo = Buffer.from(JSON.stringify(item.json.body));\n}\nconst esperada = 'sha256=' + crypto.createHmac('sha256', SECRETO).update(cuerpo).digest('hex');\nconst valida = firma.length === esperada.length && crypto.timingSafeEqual(Buffer.from(firma), Buffer.from(esperada));\nconst evento = item.json.headers['x-facturacion-evento'] || item.json.body?.evento || '';\nconst grupo = evento === 'comprobante.aceptado' ? 'aceptado'\n  : ['comprobante.rechazado', 'mensaje_receptor.rechazado'].includes(evento) ? 'rechazado'\n  : evento.startsWith('saldo.') || evento.startsWith('paquete.') || evento.startsWith('suscripcion.') || evento.startsWith('certificado.') ? 'servicio'\n  : 'otro';\nreturn [{ json: { valida, evento, grupo, datos: item.json.body } }];"
       },
-      "id": "f4c7a000-0000-4000-8000-000000000074",
+      "id": "f4c7a000-0000-4000-8000-000000000072",
       "name": "Verificar firma",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -1314,7 +1255,7 @@
           },
           "conditions": [
             {
-              "id": "f4c7a000-0000-4000-8000-000000000075",
+              "id": "f4c7a000-0000-4000-8000-000000000073",
               "leftValue": "={{ $json.valida }}",
               "rightValue": "",
               "operator": {
@@ -1328,7 +1269,7 @@
         },
         "options": {}
       },
-      "id": "f4c7a000-0000-4000-8000-000000000076",
+      "id": "f4c7a000-0000-4000-8000-000000000074",
       "name": "¿Firma válida?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -1339,7 +1280,7 @@
     },
     {
       "parameters": {},
-      "id": "f4c7a000-0000-4000-8000-000000000077",
+      "id": "f4c7a000-0000-4000-8000-000000000075",
       "name": "Descartar (firma inválida)",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
@@ -1358,7 +1299,7 @@
           },
           "conditions": [
             {
-              "id": "f4c7a000-0000-4000-8000-000000000078",
+              "id": "f4c7a000-0000-4000-8000-000000000076",
               "leftValue": "={{ $json.grupo === 'aceptado' }}",
               "rightValue": "",
               "operator": {
@@ -1372,7 +1313,7 @@
         },
         "options": {}
       },
-      "id": "f4c7a000-0000-4000-8000-000000000079",
+      "id": "f4c7a000-0000-4000-8000-000000000077",
       "name": "¿Aceptado por Hacienda?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -1383,7 +1324,7 @@
     },
     {
       "parameters": {},
-      "id": "f4c7a000-0000-4000-8000-000000000080",
+      "id": "f4c7a000-0000-4000-8000-000000000078",
       "name": "Aceptado: avisar al cliente (WhatsApp, correo, CRM)",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
@@ -1402,7 +1343,7 @@
           },
           "conditions": [
             {
-              "id": "f4c7a000-0000-4000-8000-000000000081",
+              "id": "f4c7a000-0000-4000-8000-000000000079",
               "leftValue": "={{ $json.grupo === 'rechazado' }}",
               "rightValue": "",
               "operator": {
@@ -1416,7 +1357,7 @@
         },
         "options": {}
       },
-      "id": "f4c7a000-0000-4000-8000-000000000082",
+      "id": "f4c7a000-0000-4000-8000-000000000080",
       "name": "¿Rechazado?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -1427,7 +1368,7 @@
     },
     {
       "parameters": {},
-      "id": "f4c7a000-0000-4000-8000-000000000083",
+      "id": "f4c7a000-0000-4000-8000-000000000081",
       "name": "Rechazado: revisar mensaje_hacienda y corregir",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
@@ -1446,7 +1387,7 @@
           },
           "conditions": [
             {
-              "id": "f4c7a000-0000-4000-8000-000000000084",
+              "id": "f4c7a000-0000-4000-8000-000000000082",
               "leftValue": "={{ $json.grupo === 'servicio' }}",
               "rightValue": "",
               "operator": {
@@ -1460,7 +1401,7 @@
         },
         "options": {}
       },
-      "id": "f4c7a000-0000-4000-8000-000000000085",
+      "id": "f4c7a000-0000-4000-8000-000000000083",
       "name": "¿Aviso del servicio?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -1471,7 +1412,7 @@
     },
     {
       "parameters": {},
-      "id": "f4c7a000-0000-4000-8000-000000000086",
+      "id": "f4c7a000-0000-4000-8000-000000000084",
       "name": "Saldo, vencimientos o certificado: avisar al encargado",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
@@ -1482,7 +1423,7 @@
     },
     {
       "parameters": {},
-      "id": "f4c7a000-0000-4000-8000-000000000087",
+      "id": "f4c7a000-0000-4000-8000-000000000085",
       "name": "Otros eventos",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
@@ -1892,51 +1833,29 @@
       "main": [
         [
           {
-            "node": "Resumen de IVA",
+            "node": "XML del mes (ZIP)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Resumen de IVA": {
+    "XML del mes (ZIP)": {
       "main": [
         [
           {
-            "node": "Libro de ventas",
+            "node": "Nombrar respaldo",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Libro de ventas": {
+    "Nombrar respaldo": {
       "main": [
         [
           {
-            "node": "Libro de compras",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Libro de compras": {
-      "main": [
-        [
-          {
-            "node": "Armar envío al contador",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Armar envío al contador": {
-      "main": [
-        [
-          {
-            "node": "Enviar al contador (agregue Gmail o correo)",
+            "node": "Guardar o enviar (agregue Drive o correo)",
             "type": "main",
             "index": 0
           }

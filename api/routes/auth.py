@@ -13,7 +13,7 @@ from api.models.schemas import (
     UsuarioCrear, UsuarioResponse,
 )
 from api.security import Principal, autenticar, require_admin
-from api.services import administracion, auditoria, dos_pasos, limites, saldo, suscripciones, usuarios
+from api.services import administracion, auditoria, dos_pasos, limites, permisos, saldo, suscripciones, usuarios
 from config.settings import get_settings
 
 router = APIRouter(prefix="/api/v1", tags=["usuarios y sesiones"])
@@ -58,8 +58,14 @@ def yo(principal: Principal = Depends(autenticar), db: Session = Depends(get_db)
     empresas = []
     if not principal.falta_2fa:
         query = select(Emisor).where(Emisor.activo.is_(True)).order_by(Emisor.nombre)
-        if principal.emisor_id:
+        if principal.es_contador:   # solo las que tiene a cargo (puede no tener ninguna)
+            query = query.where(Emisor.id.in_(list(principal.empresas)))
+        elif principal.emisor_id:
             query = query.where(Emisor.id == principal.emisor_id)
+        elif principal.es_admin:   # las empresas cliente (no las que un contador lleva por su cuenta)
+            query = query.where(Emisor.solo_contabilidad.is_(False))
+        else:   # cuenta recién creada que todavía no inscribe su empresa
+            query = query.where(Emisor.id.in_([]))
         lista = list(db.scalars(query))
         saldos = saldo.disponibles_por_emisor(db, [e.id for e in lista]) if saldo.control_activo() else {}
         empresas = [
@@ -77,6 +83,12 @@ def yo(principal: Principal = Depends(autenticar), db: Session = Depends(get_db)
     return {
         "usuario": usuarios.a_respuesta(usuario) if usuario else None,
         "es_admin": principal.es_admin,
+        "rol": principal.rol,
+        "es_contador": principal.es_contador,
+        # Cuenta nueva sin empresa: el panel la lleva a inscribirla
+        "falta_empresa": bool(principal.usuario_id and not principal.es_admin and not principal.es_contador
+                              and not principal.emisor_id),
+        "permisos": permisos.de_rol(principal.rol),
         "empresas": empresas,
         "control_saldo": saldo.control_activo(),
         "saldo_alerta": get_settings().SALDO_ALERTA_DOCUMENTOS,
@@ -147,15 +159,33 @@ def desactivar_2fa(payload: Desactivar2FARequest, request: Request,
 
 
 # --- Administración de usuarios ---------------------------------------------
+# El administrador del servicio maneja todos los usuarios. El dueño de una empresa
+# (permiso "usuarios") maneja solo los de su empresa y no puede crear administradores.
 
-@router.get("/usuarios", response_model=list[UsuarioResponse], dependencies=[Depends(require_admin)])
-def listar_usuarios(db: Session = Depends(get_db)):
-    return [usuarios.a_respuesta(u) for u in db.scalars(select(Usuario).order_by(Usuario.email))]
+def _gestor(principal: Principal = Depends(autenticar)) -> Principal:
+    # Solo personas del panel (no API keys de sistemas) manejan usuarios
+    if principal.es_admin or (principal.usuario_id and principal.emisor_id and permisos.tiene(principal.rol, "usuarios")):
+        return principal
+    raise HTTPException(status_code=403, detail="Solo el dueño de la empresa o un administrador maneja los usuarios")
+
+
+@router.get("/usuarios", response_model=list[UsuarioResponse])
+def listar_usuarios(principal: Principal = Depends(_gestor), db: Session = Depends(get_db)):
+    query = select(Usuario).order_by(Usuario.email)
+    if not principal.es_admin:
+        query = query.where(Usuario.emisor_id == principal.emisor_id)
+    return [usuarios.a_respuesta(u) for u in db.scalars(query)]
 
 
 @router.post("/usuarios", response_model=UsuarioResponse, status_code=201)
 def crear_usuario(payload: UsuarioCrear, request: Request,
-                  principal: Principal = Depends(require_admin), db: Session = Depends(get_db)):
+                  principal: Principal = Depends(_gestor), db: Session = Depends(get_db)):
+    if not principal.es_admin:
+        if payload.es_admin or payload.es_contador:
+            raise HTTPException(status_code=403, detail="Solo un administrador crea administradores y contadores")
+        payload.emisor_id = principal.emisor_id
+    elif not (payload.es_admin or payload.es_contador or payload.emisor_id):
+        raise HTTPException(status_code=422, detail="Un usuario es administrador, contador o de una empresa (emisor_id)")
     if payload.emisor_id:
         try:
             UUID(payload.emisor_id)
@@ -165,43 +195,52 @@ def crear_usuario(payload: UsuarioCrear, request: Request,
             raise HTTPException(status_code=404, detail="Emisor no encontrado")
     try:
         u = usuarios.crear_usuario(db, payload.email, payload.nombre, payload.password,
-                                   payload.es_admin, payload.emisor_id)
+                                   payload.es_admin, payload.emisor_id, payload.rol, es_contador=payload.es_contador)
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Ya existe un usuario con ese correo")
+    tipo = "administrador" if u.es_admin else "contador" if u.es_contador else permisos.ROLES[u.rol]
     auditoria.registrar(db, "usuario.crear", principal=principal, request=request, emisor_id=u.emisor_id,
-                        detalle=f"{u.email} ({'administrador' if u.es_admin else 'empresa'})")
+                        detalle=f"{u.email} ({tipo})")
     return usuarios.a_respuesta(u)
 
 
-def _usuario(db: Session, usuario_id: UUID) -> Usuario:
+def _usuario(db: Session, usuario_id: UUID, principal: Principal) -> Usuario:
     u = db.get(Usuario, str(usuario_id))
-    if u is None:
+    # El dueño solo ve los usuarios de su empresa (los demás "no existen" para él)
+    if u is None or (not principal.es_admin and u.emisor_id != principal.emisor_id):
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return u
 
 
 @router.patch("/usuarios/{usuario_id}", response_model=UsuarioResponse)
 def actualizar_usuario(usuario_id: UUID, payload: UsuarioActualizar, request: Request,
-                       principal: Principal = Depends(require_admin), db: Session = Depends(get_db)):
-    u = _usuario(db, usuario_id)
-    if payload.activo is False and principal.usuario_id == str(u.id):
+                       principal: Principal = Depends(_gestor), db: Session = Depends(get_db)):
+    u = _usuario(db, usuario_id, principal)
+    propio = principal.usuario_id == str(u.id)
+    if payload.activo is False and propio:
         raise HTTPException(status_code=409, detail="No puede desactivar su propio usuario")
-    cambios = [c for c in ("nombre", "activo", "password") if getattr(payload, c) is not None]
+    if payload.rol is not None and propio and payload.rol != u.rol:
+        raise HTTPException(status_code=409, detail="No puede cambiar su propio rol")
+    cambios = [c for c in ("nombre", "activo", "password", "rol") if getattr(payload, c) is not None]
     if payload.nombre is not None:
         u.nombre = payload.nombre
     if payload.activo is not None:
         u.activo = payload.activo
+    if payload.rol is not None and not (u.es_admin or u.es_contador):
+        u.rol = payload.rol
     if payload.password is not None:
         u.password_hash = usuarios.hash_password(payload.password)
         u.intentos_fallidos = 0
         u.bloqueado_hasta = None
     db.commit()
-    if payload.password is not None or payload.activo is False:
+    if payload.password is not None or payload.activo is False or payload.rol is not None:
         usuarios.cerrar_todas(db, u.id)
     detalle = f"{u.email}: {', '.join(cambios) or 'sin cambios'}"
     if payload.activo is not None:
         detalle += f" (activo={u.activo})"
+    if payload.rol is not None:
+        detalle += f" (rol={u.rol})"
     auditoria.registrar(db, "usuario.actualizar", principal=principal, request=request,
                         emisor_id=u.emisor_id, detalle=detalle)
     return usuarios.a_respuesta(u)
@@ -211,7 +250,7 @@ def actualizar_usuario(usuario_id: UUID, payload: UsuarioActualizar, request: Re
 def reiniciar_2fa(usuario_id: UUID, request: Request,
                   principal: Principal = Depends(require_admin), db: Session = Depends(get_db)):
     """Quita la verificación en dos pasos de un usuario (perdió el teléfono). Cierra sus sesiones."""
-    u = _usuario(db, usuario_id)
+    u = _usuario(db, usuario_id, principal)
     usuarios.reiniciar_2fa(db, u)
     usuarios.cerrar_todas(db, u.id)
     auditoria.registrar(db, "usuario.2fa_reiniciada", principal=principal, request=request,

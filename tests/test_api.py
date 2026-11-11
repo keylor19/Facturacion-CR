@@ -282,7 +282,7 @@ def test_tipos_de_cambio_en_una_consulta(client, hacienda_falsa):
     assert len(llamadas) == 1
 
 
-def test_reportes(client, db):
+def test_reportes(client, db, contador):
     ids = [client.post("/api/v1/facturas", json=factura_payload()).json()["factura_id"] for _ in range(2)]
     for fid in ids:
         db.get(Factura, fid).estado = EstadoFactura.ACEPTADO
@@ -291,14 +291,16 @@ def test_reportes(client, db):
 
     from api.services.fechas import zona_cr
     local = fecha.astimezone(zona_cr())
-    r = client.get(f"/api/v1/reportes/resumen-iva?anio={local.year}&mes={local.month}")
+    # El IVA y los libros son del contador; la empresa (API key) no los ve
+    assert client.get(f"/api/v1/reportes/resumen-iva?anio={local.year}&mes={local.month}").status_code == 403
+    r = client.get(f"/api/v1/reportes/resumen-iva?anio={local.year}&mes={local.month}", headers=contador)
     assert r.status_code == 200, r.text
     resumen = r.json()
     assert Decimal(resumen["iva_debito_fiscal"]) == Decimal("23400.00")
     tarifas = {t["codigo_tarifa_iva"]: t for t in resumen["ventas"]["por_tarifa"]}
     assert Decimal(tarifas["08"]["base"]) == Decimal("180000.00")
 
-    csv = client.get(f"/api/v1/reportes/ventas.csv?anio={local.year}&mes={local.month}")
+    csv = client.get(f"/api/v1/reportes/ventas.csv?anio={local.year}&mes={local.month}", headers=contador)
     assert csv.status_code == 200
     assert csv.text.count("\n") == 3  # encabezado + 2 filas
 

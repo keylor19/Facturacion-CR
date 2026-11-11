@@ -238,7 +238,8 @@ POST /api/v1/facturas/{factura_id}/recibo-pago
 |---|---|
 | Consultar un comprobante | `GET /facturas/{id}` |
 | Buscar comprobantes | `GET /facturas?estado=&desde=&hasta=&referencia_externa=` |
-| PDF para el cliente | `GET /facturas/{id}/pdf` |
+| PDF para el cliente | `GET /facturas/{id}/pdf` (hoja carta) · `?formato=80mm` o `?formato=58mm` para impresora térmica |
+| Enlace para WhatsApp | `GET /facturas/{id}/enlace?telefono=88887777`: devuelve el enlace de descarga sin usuario y el enlace `wa.me` con el mensaje listo |
 | XML firmado / respuesta de Hacienda | `GET /facturas/{id}/xml?tipo=firmado` · `?tipo=respuesta` |
 | Reenviar por correo | `POST /facturas/{id}/correo` |
 | Saldo de documentos | `GET /saldo` |
@@ -249,7 +250,35 @@ POST /api/v1/facturas/{factura_id}/recibo-pago
 | Verificar una exoneración | `GET /hacienda/exoneraciones/{AL-XXXXXXXX-XX}` |
 | Tipo de cambio | `GET /hacienda/tipo-cambio` |
 | Logo de la empresa (sale en el PDF) | `PUT /empresa/logo` (PNG o JPEG, máximo 300 KB, campo `archivo`) |
-| Resumen de IVA del mes | `GET /reportes/resumen-iva` |
+| Respaldo de los XML de un mes (ZIP con índice en Excel) | `GET /reportes/documentos.zip?desde=2026-11-01&hasta=2026-11-30` |
+| Primeros pasos de la empresa | `GET /empresa/arranque` · `PUT /empresa/certificado` · `PUT /empresa/credenciales-hacienda` · `POST /empresa/probar-conexion` |
+
+### Cuentas por cobrar
+
+Para ventas a crédito (`condicion_venta` 02 con `plazo_credito`). Los cobros del crédito comercial
+no llevan comprobante electrónico: se registran como abonos. Las condiciones 08 y 10 se cobran con
+recibo electrónico de pago (sección 6.3).
+
+| Operación | Endpoint |
+|---|---|
+| Facturas con saldo, antigüedad (al día, 1-30, 31-60, 61-90, más de 90 días) y saldo por cliente | `GET /cobros/cartera` |
+| Estado de cuenta de un cliente | `GET /cobros/estado-cuenta/{cedula}` |
+| Saldo y abonos de una factura | `GET /cobros/facturas/{id}` |
+| Registrar un pago | `POST /cobros/facturas/{id}/abonos` con `{"monto": "50000", "medio_pago": "06", "referencia": "SINPE 123"}` |
+| Anular un abono registrado por error | `POST /cobros/abonos/{id}/anular` |
+| Recordatorios automáticos por correo | `PUT /cobros/ajustes` con `{"recordar_cobros": true}` (a los 1, 8, 15, 30 y 60 días de atraso) |
+
+### Facturas recurrentes
+
+Alquileres, mensualidades o servicios fijos: se guarda el cuerpo de `POST /facturas` una vez y el
+servicio lo emite solo cada semana, quincena, mes o año (a las 7:00 a. m.). Cada emisión lleva
+`referencia_externa` `REC-<id>-<fecha>`, así que nunca se duplica.
+
+| Operación | Endpoint |
+|---|---|
+| Crear | `POST /recurrentes` con `{"nombre": "Alquiler local 3", "datos": {…cuerpo de /facturas…}, "frecuencia": "mensual", "proxima": "2026-12-01", "hasta": null}` |
+| Listar, ver, cambiar, borrar | `GET /recurrentes` · `GET/PUT/DELETE /recurrentes/{id}` (`activa: false` la pausa) |
+| Emitir hoy (fuera de calendario) | `POST /recurrentes/{id}/emitir-ahora` |
 
 ### Catálogo e inventario (opcional)
 
@@ -346,6 +375,13 @@ Si usa **n8n**, pida a su proveedor el flujo listo para importar: emite,
 consulta y anula comprobantes sin escribir código. Cualquier herramienta que
 pueda hacer solicitudes HTTP (Make, Zapier, Power Automate) sirve con los
 mismos datos: URL, método, encabezado `X-API-Key` y el JSON.
+
+### Tienda WooCommerce
+
+Si su tienda en línea es WordPress con WooCommerce, pida a su proveedor el
+complemento **Facturación Electrónica CR**: se instala como cualquier plugin,
+se le pone la dirección del servicio y la API key, y factura solo cada pedido
+(factura si el cliente escribe su cédula al pagar, tiquete si no).
 
 ---
 

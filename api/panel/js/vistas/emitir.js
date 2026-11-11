@@ -8,6 +8,7 @@ import {
 } from '../catalogos.js';
 import { selectorUbicacion } from '../ubicacion.js';
 import { descuentosVigentes, mejorDescuento } from '../promociones.js';
+import { dialogoRecurrente } from './recurrentes.js';
 
 // Explicación corta de cada documento, debajo del título
 const AYUDA_TIPO = {
@@ -170,7 +171,10 @@ function bloquePersona(titulo, { conUbicacion = false, conCatalogo = false, alId
     },
     valor() {
       if (!numero.value.trim() && !nombre.value.trim()) return null;
-      const p = { nombre: nombre.value.trim(), tipo_identificacion: tipo.value, numero_identificacion: numero.value.trim() };
+      // Sin cédula va solo el nombre (Hacienda lo acepta en el tiquete)
+      const p = numero.value.trim()
+        ? { nombre: nombre.value.trim(), tipo_identificacion: tipo.value, numero_identificacion: numero.value.trim() }
+        : { nombre: nombre.value.trim() };
       if (correo.value.trim()) p.correo = correo.value.trim();
       if (actividad.value) p.codigo_actividad = actividad.value;
       if (conUbicacion && ubic.provincia.value) {
@@ -728,7 +732,7 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
     campoTc.classList.toggle('oculto', moneda.value === 'CRC');
     ayudaTipo.textContent = esProforma ? 'No se envía a Hacienda: se guarda para convertirla en factura después.' : (AYUDA_TIPO[t] || '');
     receptor.nota.textContent = t === '04'
-      ? 'Opcional en el tiquete. Si el cliente pide factura a su nombre, escriba su cédula y se emite factura electrónica.'
+      ? 'Opcional en el tiquete: puede poner solo el nombre del cliente o dejarlo vacío (sale «Consumidor final»).'
       : 'Escriba la identificación: el nombre y la actividad se llenan solos con los datos de Hacienda.';
     tituloDetalle.textContent = TITULO_DETALLE[t] || '2. ¿Qué vende?';
     if (['02', '03'].includes(t)) {
@@ -936,7 +940,12 @@ export async function vistaEmitir(cont, tipoInicial = '01', modo = {}) {
       : h('button', { type: 'button', onclick: () => guardarComo(proforma, 'proforma') }, 'Guardar como proforma');
     const pdf = borrador?.clase === 'proforma'
       ? h('button', { type: 'button', onclick: () => conBoton(pdf, () => abrir(`/borradores/${borrador.id}/pdf`)) }, 'Ver PDF') : null;
-    return [preliminar, proforma, pdf];
+    // Alquileres, mensualidades: la misma factura se emite sola en cada fecha
+    const repetir = borrador ? null : h('button', { type: 'button', title: 'Se emite sola cada semana, quincena, mes o año', onclick: () => {
+      if (!['01', '04', '09'].includes(tipo.value)) { toast('Solo facturas, tiquetes y exportaciones se pueden repetir', 'error'); return; }
+      dialogoRecurrente({ datos: armarDatos(), alGuardar: () => { location.hash = '#/recurrentes'; } });
+    } }, 'Repetir automáticamente');
+    return [preliminar, proforma, repetir, pdf];
   }
 
   const nombreDocumento = () => {

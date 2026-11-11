@@ -289,3 +289,16 @@ def test_conexion_api_se_activa_por_empresa(db, emisor, api_key, admin, cola):
 
     admin.patch(f"/api/v1/emisores/{emisor.id}", json={"acceso_api": True})
     assert client.post("/api/v1/facturas", json=factura_payload()).status_code == 202
+
+
+@pytest.mark.parametrize("formato", ["80mm", "58mm"])
+def test_tiquete_para_impresora_termica(client, formato):
+    import re
+    fid = client.post("/api/v1/facturas", json=factura_payload()).json()["factura_id"]
+    r = client.get(f"/api/v1/facturas/{fid}/pdf", params={"formato": formato})
+    assert r.status_code == 200 and r.content.startswith(b"%PDF")
+    cajas = re.findall(rb"/MediaBox \[\s*0 0 ([\d.]+) ([\d.]+)", r.content)
+    assert len(cajas) == 1  # todo en un solo trozo de rollo
+    ancho_mm = float(cajas[0][0]) / 72 * 25.4
+    assert abs(ancho_mm - int(formato[:2])) < 0.5
+    assert client.get(f"/api/v1/facturas/{fid}/pdf", params={"formato": "A3"}).status_code == 422

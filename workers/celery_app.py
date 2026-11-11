@@ -59,6 +59,26 @@ celery_app.conf.update(
             "task": "workers.tasks.revisar_suscripciones",
             "schedule": crontab(hour=6, minute=20),
         },
+        # Emite las facturas recurrentes del día (alquileres, mensualidades) (diaria, 7:00)
+        "emitir-recurrentes": {
+            "task": "workers.tasks.emitir_recurrentes",
+            "schedule": crontab(hour=7, minute=0),
+        },
+        # Factura mensual de los servicios del mes anterior (día 1, 6:30)
+        "facturar-mensualidades": {
+            "task": "workers.tasks.facturar_mensualidades",
+            "schedule": crontab(day_of_month=1, hour=6, minute=30),
+        },
+        # Recordatorio de mensualidades por vencer y aviso de suspensión (diaria, 9:00)
+        "recordar-mensualidades": {
+            "task": "workers.tasks.recordar_mensualidades",
+            "schedule": crontab(hour=9, minute=0),
+        },
+        # Recordatorio por correo a clientes con facturas a crédito vencidas (diaria, 8:00)
+        "recordar-cobros": {
+            "task": "workers.tasks.recordar_cobros",
+            "schedule": crontab(hour=8, minute=0),
+        },
         # Refresca los datos públicos de Hacienda guardados (contribuyentes,
         # exoneraciones, CABYS...), tipo de cambio del día y versión nueva del catálogo CABYS (3:00)
         "actualizar-datos-hacienda": {

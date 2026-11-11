@@ -39,6 +39,7 @@ export function dialogoCliente(cliente, alGuardar) {
     }
     if (!vigente()) return;
     if (r.nombre) f.nombre.value = r.nombre;
+    if ((r.situacion?.estado || '').toLowerCase() === 'inscrito') masDatos.open = true;
     if (r.tipoIdentificacion) f.tipo_identificacion.value = r.tipoIdentificacion;
     const activas = (r.actividades || []).filter((a) => a.estado === 'A' || !a.estado);
     vaciar(listaActividades, activas.map((a) => h('option', { value: String(a.codigo).padStart(6, '0') }, a.descripcion)));
@@ -47,6 +48,13 @@ export function dialogoCliente(cliente, alGuardar) {
     vaciar(info, avisoContribuyente(r, activas, { comoCliente: true }));
   });
   const buscar = h('button', { type: 'button', onclick: () => conBoton(buscar, consultar) }, 'Buscar en Hacienda');
+
+  // A un cliente común le basta cédula, nombre, correo, teléfono y dirección. Los datos
+  // de contribuyente (nombre comercial, actividad) se abren solos si Hacienda lo tiene inscrito.
+  const masDatos = h('details', { class: 'opcional', open: Boolean(c.nombre_comercial || c.codigo_actividad || c.notas) },
+    h('summary', {}, 'Más datos: nombre comercial, actividad económica y notas'),
+    h('div', { class: 'campos' }, campo('Nombre comercial', f.nombre_comercial), campo('Actividad económica', f.codigo_actividad)),
+    campo('Notas internas', f.notas));
 
   const guardar = h('button', { type: 'button', class: 'primario', onclick: () => conBoton(guardar, async () => {
     const cuerpo = {};
@@ -63,14 +71,13 @@ export function dialogoCliente(cliente, alGuardar) {
     h('div', { class: 'campos' },
       campo('Tipo de identificación', f.tipo_identificacion),
       h('div', { class: 'fila doble' }, campo('Identificación', f.numero_identificacion), buscar),
-      campo('Nombre o razón social', f.nombre), campo('Nombre comercial', f.nombre_comercial),
-      campo('Correo (recibe las facturas)', f.correo), campo('Teléfono', f.telefono),
-      campo('Actividad económica', f.codigo_actividad)),
+      campo('Nombre o razón social', f.nombre),
+      campo('Correo (recibe las facturas)', f.correo), campo('Teléfono', f.telefono)),
     info, listaActividades,
-    h('h3', {}, 'Ubicación (opcional)'),
+    h('h3', {}, 'Dirección (opcional)'),
     h('div', { class: 'campos' }, campo('Provincia', f.provincia), campo('Cantón', f.canton),
       campo('Distrito', f.distrito), campo('Otras señas', f.otras_senas)),
-    campo('Notas internas', f.notas),
+    masDatos,
   ], { acciones: [guardar], ancho: true });
 }
 

@@ -11,12 +11,13 @@ from sqlalchemy.orm import Session
 from api.models.database import get_db, Emisor, Factura, EstadoFactura, ESTADOS_REENVIABLES
 from api.models.schemas import (
     FacturaRequest, FacturaResponse, FacturaDetalleResponse, AnularRequest, CorreoRequest, EventoResponse,
-    ReciboPagoRequest,
+    ReciboPagoRequest, TIPOS_COMPROBANTE,
 )
-from api.security import emisor_actual, emisor_facturacion_web
+from api.security import Principal, emisor_actual, emisor_facturacion_web, permiso
+from api.services import enlaces, permisos
 from api.services import emision, saldo
 from api.services.fechas import zona_cr
-from api.services.pdf import generar_pdf
+from api.services.pdf import generar_pdf, generar_ticket
 from config.settings import get_settings
 from workers.tasks import enviar_documento, consultar_documento, enviar_correo
 
@@ -103,7 +104,12 @@ def _emitir(db, emisor, datos, response: Response, factura_origen_id=None, caja_
 def crear_factura(
     payload: FacturaRequest, response: Response,
     emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db),
+    principal: Principal = Depends(permiso("emitir")),
 ):
+    # Las notas de crédito y débito corrigen comprobantes: requieren el permiso de anular
+    if payload.tipo_documento in ("02", "03") and not permisos.tiene(principal.rol, "anular"):
+        raise HTTPException(status_code=403, detail="Su usuario no tiene permiso para emitir notas de crédito o débito. "
+                                                    "Pídaselo al dueño de la empresa.")
     return _emitir(db, emisor, payload, response)
 
 
@@ -168,16 +174,35 @@ def obtener_xml(
 
 
 @router.get("/{factura_id}/pdf")
-def obtener_pdf(factura_id: UUID, emisor: Emisor = Depends(emisor_actual), db: Session = Depends(get_db)):
-    """Representación gráfica del comprobante."""
+def obtener_pdf(
+    factura_id: UUID,
+    formato: Literal["carta", "80mm", "58mm"] = Query("carta", description="carta, o tiquete para impresora térmica de 80 mm o 58 mm"),
+    emisor: Emisor = Depends(emisor_actual), db: Session = Depends(get_db),
+):
+    """Representación gráfica del comprobante (hoja carta o rollo térmico)."""
     factura = _buscar(db, emisor, factura_id)
+    contenido = generar_pdf(factura) if formato == "carta" else generar_ticket(factura, formato)
     return Response(
-        content=generar_pdf(factura), media_type="application/pdf",
+        content=contenido, media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{factura.clave}.pdf"'},
     )
 
 
-@router.post("/{factura_id}/anular", response_model=FacturaResponse, status_code=202)
+@router.get("/{factura_id}/enlace")
+def enlace_publico(factura_id: UUID, telefono: str | None = Query(default=None, max_length=20),
+                   emisor: Emisor = Depends(emisor_actual), db: Session = Depends(get_db)):
+    """Enlaces de descarga sin sesión y mensaje listo para WhatsApp."""
+    f = _buscar(db, emisor, factura_id)
+    tipo = TIPOS_COMPROBANTE.get(f.tipo_documento, "comprobante electrónico").lower()
+    empresa = emisor.nombre_comercial or emisor.nombre
+    pdf = enlaces.url_pdf(str(f.id))
+    texto = (f"Hola{(' ' + f.receptor_nombre.split()[0]) if f.receptor_nombre else ''}, le enviamos su {tipo} "
+             f"{f.numero_consecutivo} de {empresa} por {f.moneda} {f.monto_total:,.2f}.\nDescárguela aquí: {pdf}")
+    return {"pdf": pdf, "xml": enlaces.url_xml(str(f.id)), "texto": texto, "whatsapp": enlaces.whatsapp(telefono, texto)}
+
+
+@router.post("/{factura_id}/anular", response_model=FacturaResponse, status_code=202,
+             dependencies=[Depends(permiso("anular"))])
 def anular_factura(
     factura_id: UUID, payload: AnularRequest, response: Response,
     emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db),
@@ -193,7 +218,8 @@ def anular_factura(
     return _emitir(db, emisor, datos, response, factura_origen_id=original.id)
 
 
-@router.post("/{factura_id}/recibo-pago", response_model=FacturaResponse, status_code=202)
+@router.post("/{factura_id}/recibo-pago", response_model=FacturaResponse, status_code=202,
+             dependencies=[Depends(permiso("cobrar"))])
 def recibo_pago(
     factura_id: UUID, payload: ReciboPagoRequest, response: Response,
     emisor: Emisor = Depends(emisor_facturacion_web), db: Session = Depends(get_db),

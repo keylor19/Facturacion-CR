@@ -544,3 +544,48 @@ tbody tr:hover td { background: rgba(234, 241, 253, .55); }
   body { background: #fff; }
   .contenido > *, .aviso { animation: none; }
 }
+
+/* Imprimir tiquete + ancho del rollo */
+.grupo-tiquete { display: inline-flex; gap: 6px; align-items: center; }
+.grupo-tiquete select { width: auto; }
+
+/* Montos con botón Copiar (borrador D-104) */
+.monto-copiable { display: inline-flex; gap: 8px; align-items: center; justify-content: flex-end; }
+
+/* Primeros pasos */
+.paso-arranque h2 { display: flex; align-items: center; gap: 10px; }
+.paso-arranque.hecho { opacity: .75; }
+.numero-paso { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--azul); color: #fff; font-size: 14px; flex: none; }
+.paso-arranque.hecho .numero-paso { background: #2e7d32; }
+
+/* Inscripción en línea */
+.registro-formulario { padding: 28px; }
+.registro-formulario form { display: grid; gap: 12px; }
+.trampa { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+.login-inscribirse { margin-top: 6px; }
+
+.instrucciones-pago { white-space: pre-line; }
+
+/* Contabilidad */
+.lista-chequeo { max-height: 360px; overflow-y: auto; display: grid; gap: 6px; padding: 8px 2px; }
+.nivel-1 { padding-left: 14px; } .nivel-2 { padding-left: 28px; } .nivel-3 { padding-left: 42px; } .nivel-4 { padding-left: 56px; }
+.asiento { cursor: pointer; }
+.asiento.anulado { opacity: .55; cursor: default; }
+.lineas-asiento select { min-width: 260px; }
+.lineas-asiento input[type=number] { width: 130px; }
+.total-venta.descuadre { color: #b3261e; }
+
+/* Entrar con Google / Microsoft */
+.proveedores { display: grid; gap: 8px; margin: 6px 0 4px; }
+.proveedor { width: 100%; justify-content: center; font-weight: 600; background: #fff; border: 1px solid var(--borde); }
+.proveedores .separador { text-align: center; color: var(--suave); font-size: 13px; margin: 6px 0 0; }
+
+/* Mis servicios */
+.tarjetas-servicio { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.tarjetas-servicio .tarjeta { margin: 0; display: grid; gap: 8px; align-content: start; }
+
+.proveedor { display: inline-flex; align-items: center; gap: 10px; color: #1f1f1f; min-height: 44px; }
+.proveedor:hover { background: #f6f8fc; }
+.logo-proveedor { width: 20px; height: 20px; flex: none; }
+.login-inscribirse { display: grid; gap: 8px; justify-items: start; }

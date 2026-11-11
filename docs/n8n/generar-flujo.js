@@ -269,41 +269,30 @@ resultado('Armar saldo', [COL[2], y6 + 360],
 responder('Responder saldo', [COL[3], y6 + 360]);
 cadena('Webhook saldo', 'Consultar saldo', 'Armar saldo', 'Responder saldo');
 
-// --- 7. Cierre mensual para el contador -------------------------------------------------------------
+// --- 7. Respaldo mensual de los XML ------------------------------------------------------------------
+// El IVA, la D-104 y los libros los ve el contador en su módulo de contabilidad (no la empresa).
 let y7 = seccion(380);
-nota('7. Contador', '## 7. Cierre del mes para el contador (automático)\nEl día 1 a las 7:00 prepara el resumen de IVA y los libros de ventas y compras del mes anterior (Excel).\n\nConecte al final un nodo **Gmail / Send Email / Google Drive** para enviárselos al contador.', -300, y7, 180);
+nota('7. Respaldo', '## 7. Respaldo del mes (automático)\nEl día 1 a las 7:00 descarga en un ZIP los XML del mes anterior (emitidos, recibidos y respuestas de Hacienda) con su índice en Excel. Hacienda exige guardarlos 5 años.\n\nConecte al final un nodo **Google Drive / Dropbox / Gmail** para guardarlo o mandárselo a su contador.', -300, y7, 200);
 nodo('Día 1 de cada mes', 'n8n-nodes-base.scheduleTrigger', 1.2, [COL[0], y7 + 220], {
   rule: { interval: [{ field: 'months', monthsInterval: 1, triggerAtDayOfMonth: 1, triggerAtHour: 7 }] } });
 nodo('Mes anterior', 'n8n-nodes-base.code', 2, [COL[1], y7 + 220], codigo(
   'const hoy = new Date();',
   'const d = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);',
-  'return [{ json: { anio: d.getFullYear(), mes: d.getMonth() + 1, periodo: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, \'0\')}` } }];'));
-http('Resumen de IVA', 'GET', `=${BASE}/reportes/resumen-iva?anio={{ $json.anio }}&mes={{ $json.mes }}`, [COL[2], y7 + 220]);
-const archivo = (name, ruta, pos) => nodo(name, 'n8n-nodes-base.httpRequest', 4.2, pos, {
-  method: 'GET', url: `=${BASE}/reportes/${ruta}?anio={{ $('Mes anterior').first().json.anio }}&mes={{ $('Mes anterior').first().json.mes }}`,
+  'const fin = new Date(hoy.getFullYear(), hoy.getMonth(), 0);',
+  "const iso = (x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;",
+  'return [{ json: { desde: iso(d), hasta: iso(fin), periodo: iso(d).slice(0, 7) } }];'));
+nodo('XML del mes (ZIP)', 'n8n-nodes-base.httpRequest', 4.2, [COL[2], y7 + 220], {
+  method: 'GET', url: `=${BASE}/reportes/documentos.zip?desde={{ $json.desde }}&hasta={{ $json.hasta }}`,
   authentication: 'genericCredentialType', genericAuthType: 'httpHeaderAuth',
-  options: { response: { response: { responseFormat: 'file', outputPropertyName: 'data' } } },
+  options: { response: { response: { responseFormat: 'file', outputPropertyName: 'data' } }, timeout: 300000 },
 }, { credentials: CRED_API });
-archivo('Libro de ventas', 'ventas.csv', [COL[3], y7 + 220]);
-archivo('Libro de compras', 'compras.csv', [COL[4], y7 + 220]);
-nodo('Armar envío al contador', 'n8n-nodes-base.code', 2, [COL[5], y7 + 220], codigo(
+nodo('Nombrar respaldo', 'n8n-nodes-base.code', 2, [COL[3], y7 + 220], codigo(
   "const { periodo } = $('Mes anterior').first().json;",
-  "const iva = $('Resumen de IVA').first().json.body || {};",
-  "const ventas = $('Libro de ventas').first().binary.data;",
-  "const compras = $('Libro de compras').first().binary.data;",
-  'ventas.fileName = `ventas-${periodo}.csv`;',
-  'compras.fileName = `compras-${periodo}.csv`;',
-  'const texto = [',
-  '  `Cierre de ${periodo}`,',
-  '  `IVA débito (ventas): ${iva.iva_debito_fiscal}`,',
-  '  `IVA crédito (compras): ${iva.iva_credito_fiscal}`,',
-  '  `IVA neto estimado: ${iva.iva_neto_estimado}`,',
-  "  'Adjuntos: libros de ventas y compras (Excel).',",
-  "].join('\\n');",
-  'return [{ json: { asunto: `Facturación ${periodo}: libros e IVA`, texto, resumen_iva: iva }, binary: { ventas, compras } }];'));
-nodo('Enviar al contador (agregue Gmail o correo)', 'n8n-nodes-base.noOp', 1, [COL[5] + 240, y7 + 220], {});
-cadena('Día 1 de cada mes', 'Mes anterior', 'Resumen de IVA', 'Libro de ventas', 'Libro de compras', 'Armar envío al contador',
-  'Enviar al contador (agregue Gmail o correo)');
+  'const zip = $input.first().binary.data;',
+  'zip.fileName = `comprobantes-${periodo}.zip`;',
+  'return [{ json: { asunto: `Comprobantes electrónicos de ${periodo}`, periodo }, binary: { data: zip } }];'));
+nodo('Guardar o enviar (agregue Drive o correo)', 'n8n-nodes-base.noOp', 1, [COL[4], y7 + 220], {});
+cadena('Día 1 de cada mes', 'Mes anterior', 'XML del mes (ZIP)', 'Nombrar respaldo', 'Guardar o enviar (agregue Drive o correo)');
 
 // --- 8. Avisos del servicio ------------------------------------------------------------------------------
 let y8 = seccion(700);

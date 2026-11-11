@@ -28,6 +28,80 @@ usuario de **administrador**.
 
 ---
 
+## 0. Autoservicio: usted solo supervisa
+
+Los clientes hacen todo solos; usted solo vigila que todo funcione y ayuda si se lo piden.
+
+| Quién | Qué hace solo |
+|---|---|
+| **Quien va a facturar** | Crea su cuenta (Google, Microsoft o correo), **inscribe su empresa** con todos sus datos (se verifica en Hacienda), recibe la prueba gratis, sube su llave de Hacienda, **crea los usuarios de quienes facturan con él** y **compra** su paquete de documentos y el sistema en línea. |
+| **Contador** | Crea su cuenta como *Soy contador* y escoge o inscribe las empresas a las que les lleva la contabilidad. |
+
+### Cada servicio se cobra por aparte
+
+| Servicio | Quién lo paga | Cómo se cobra |
+|---|---|---|
+| **Documentos facturables** | La empresa | Paquetes prepago: los compra y los recarga cuando quiera (Mi saldo → Comprar documentos). |
+| **Sistema en línea** | La empresa que factura desde el navegador | Mensualidad. Se activa al inscribir la empresa, con días de prueba gratis. |
+| **Contabilidad de la empresa** | La empresa, solo si el dueño la lleva él mismo | Mensualidad. Se activa en Mis servicios. |
+| **Cuenta de contador** | El contador | Mensualidad. Cubre todas las empresas que lleva (ellas no pagan contabilidad). |
+
+La conexión por API no tiene mensualidad: se paga solo con documentos.
+
+**Cómo se cobran las mensualidades:**
+1. Al pedir un servicio se le muestra el precio («₡X por mes») y queda activo de inmediato. La
+   primera vez, con los días de prueba gratis. El precio queda fijo para ese cliente.
+2. El **día 1** de cada mes el sistema emite **una factura electrónica** por cliente con los
+   servicios del mes anterior, **proporcional a los días** que los tuvo (sin contar la prueba), a
+   crédito por los días para pagar, y le manda el detalle por correo.
+3. Tres días antes del vencimiento le llega un recordatorio. Si vence sin pagar, las
+   **mensualidades se suspenden solas** (los documentos ya pagados siguen sirviendo por API) y se
+   reactivan apenas reporta el pago.
+4. El cliente paga por SINPE o transferencia y lo **reporta** en Mis servicios → Facturas.
+
+**Lo que le queda a usted:**
+
+- **Fijar los precios una vez** en *Ventas → Facturación y avisos*: planes de documentos, precio por
+  mes del sistema en línea, de la contabilidad y de la cuenta de contador, y los días para pagar.
+  Un precio vacío = ese servicio no se cobra.
+- **Mensualidades** (*Ventas → Mensualidades*): confirmar los pagos que los clientes reportan.
+  Ve el estimado del mes y puede generar a mano las facturas de un mes si el sistema no lo hizo.
+- **Compras por revisar** (*Ventas → Pagos por revisar*): confirmar que el SINPE o la transferencia
+  de un paquete de documentos llegó y aprobarlo. Es lo único que el sistema no puede verificar solo; con una pasarela de pago
+  con tarjeta se podría automatizar.
+- Mirar el **Tablero**: *Pagos por revisar*, *Inscripciones esta semana* (y cuántas cuentas no
+  han inscrito su empresa), empresas con problemas.
+- Ayudar a quien se lo pida: en **Empresas** puede seguir dando de alta una empresa (sección 4).
+- Fijar precios una vez: planes y precio por mes del sistema en línea (secciones 2.2 y 2.3).
+
+### 0.1 Activar «Continuar con Google» y «Continuar con Microsoft»
+
+Los botones aparecen solos cuando el servidor tiene sus credenciales en el `.env`
+(`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`).
+Se necesita el dominio con HTTPS ya funcionando.
+
+**Google** (console.cloud.google.com):
+1. Cree un proyecto. En *APIs y servicios → Pantalla de consentimiento de OAuth* elija *Externo*,
+   ponga el nombre del servicio, su correo y publíquela.
+2. *Credenciales → Crear credenciales → ID de cliente de OAuth → Aplicación web*.
+3. En *URI de redireccionamiento autorizados* ponga
+   `https://SU-DOMINIO/api/v1/auth/oauth/google/callback`.
+4. Copie el *ID de cliente* y el *Secreto* al `.env`.
+
+**Microsoft** (portal.azure.com → Microsoft Entra ID → Registros de aplicaciones):
+1. *Nuevo registro*. Tipos de cuenta: *Cuentas de cualquier directorio organizativo y cuentas
+   personales de Microsoft*.
+2. URI de redirección (Web): `https://SU-DOMINIO/api/v1/auth/oauth/microsoft/callback`.
+3. *Certificados y secretos → Nuevo secreto de cliente*. Copie el *Id. de aplicación (cliente)*
+   y el *valor* del secreto al `.env`.
+
+Reinicie el API. Sin estas credenciales los clientes igual se inscriben con su correo (esto
+necesita el correo de salida, SMTP). Los administradores del servicio no entran con Google ni
+Microsoft: usan contraseña y verificación en dos pasos.
+
+La inscripción en línea se puede cerrar en *Ventas → Facturación y avisos* (casilla
+*Permitir que nuevas empresas se inscriban solas*).
+
 ## 1. Cómo funciona el negocio
 
 La plataforma es un **API de consumo**: otros sistemas (puntos de venta,
@@ -121,6 +195,25 @@ empresa le quedan pocos documentos, se le agotan o se le vence el panel web):
 
 Si deja **Empresa que emite** vacía, las ventas se registran igual pero
 **no** generan factura, y el sistema se lo recuerda en **Contabilidad**.
+
+**Venta en línea** (misma pantalla):
+
+| Campo | Qué hace |
+|---|---|
+| **Permitir que nuevas empresas se inscriban solas** | Muestra «Pruébelo gratis» en la página de entrada. La persona pone la cédula de la empresa (debe estar inscrita en Hacienda), su correo y dirección; le llega un enlace para activar la cuenta. Requiere el correo de salida (SMTP). Apagado por defecto. |
+| **Documentos gratis / Días gratis** | Lo que recibe cada empresa al activar su cuenta (por ejemplo 20 documentos y 15 días del sistema en línea), en ambiente de pruebas. |
+| **Precio por mes del sistema en línea** | Si lo llena, el cliente puede comprar meses del sistema web él solo. Vacío = solo los vende usted. |
+
+Los clientes compran los **planes activos con precio** desde *Mi saldo → Comprar
+documentos*: pagan por SINPE Móvil o transferencia y le avisan con el número del
+comprobante (y la foto, si quieren). Usted lo revisa en **Ventas → Pagos por
+revisar** (le llega un correo a *Su correo*):
+
+- **Ver comprobante**, confirme que el dinero está en su cuenta y toque **Aprobar**:
+  se acreditan los documentos y/o los meses, se emite la factura de la venta y al
+  cliente le llega un correo.
+- **Rechazar** con el motivo (por ejemplo «no aparece el depósito»): al cliente le
+  llega el motivo por correo.
 
 ### 2.3 Catálogo de planes
 
@@ -447,7 +540,7 @@ El cliente entra y ve el menú superior:
 | **Facturar** | *Vender:* Factura rápida, Factura electrónica, Tiquete, Punto de venta. *Corregir una factura ya enviada:* Nota de crédito, Nota de débito. *Otros:* Proforma o cotización, Factura de compra, Factura de exportación |
 | **Documentos** | *Lo que vendí:* Documentos emitidos, Facturas sin enviar, Proformas, Cierres de caja. *Lo que compré:* Facturas de proveedores. *Cobros:* Facturas por cobrar, Recibos de pago. *Respaldo:* Descargar XML y PDF |
 | **Clientes y productos** | Clientes, productos, inventario, categorías, descuentos, combos e importación desde Excel |
-| **Reportes** | Reporte de IVA (D-104), ventas por cliente y por producto, Consultas a Hacienda |
+| **Reportes** | Ventas por cliente y por producto, Consultas a Hacienda (el IVA y la D-104 los ve solo el contador) |
 | **Configuración** | Datos de la empresa, actividad económica, **Saldo de documentos**, Mi usuario |
 
 Puntos que conviene explicarle:
@@ -482,6 +575,32 @@ Las API keys, el webhook y los usuarios **no cambian**: el sistema del cliente
 sigue funcionando igual.
 
 ---
+
+## 10.1 Usuarios de cada empresa
+
+El dueño de cada empresa maneja sus propios usuarios en *Configuración → Usuarios*
+con tres roles: **Dueño** (todo), **Administrativo** (facturas, anulaciones, cobros y
+proveedores) y **Cajero** (vender y cobrar). Usted, como administrador, puede seguir
+creando usuarios en *Empresas → Usuarios*. Los contadores se manejan aparte (10.2).
+
+Los dueños también pueden subir la llave criptográfica y el usuario de Hacienda
+ellos mismos en *Configuración → Primeros pasos*.
+
+## 10.2 Contadores (módulo de contabilidad)
+
+La contabilidad es un módulo que ven **solo el dueño de cada empresa** (la de él) y los
+**usuarios contadores** (las que llevan). Usted como administrador no entra a él, ni los
+demás usuarios de las empresas.
+
+1. **Empresas → Usuarios → + Nuevo usuario**, en *Acceso* elija **Contador**.
+2. El contador entra y **escoge él mismo** sus empresas: busca por cédula las que ya
+   facturan aquí (a la empresa le llega un aviso y su dueño puede quitarle el acceso en
+   *Usuarios → Contadores con acceso*) o inscribe las que no facturan aquí y carga sus XML.
+3. El contador solo ve su módulo: no puede facturar, ni ver saldos, usuarios o configuración
+   de las empresas.
+
+Las empresas que un contador inscribe él mismo no aparecen en su lista de Empresas ni
+consumen documentos.
 
 ## 11. Revisión diaria: que todo vaya bien
 

@@ -2,6 +2,7 @@
 import { api, sesion } from '../api.js';
 import { h, vaciar } from '../dom.js';
 import { cargarContexto, contexto } from '../app.js';
+import { botonesProveedores } from './registro.js';
 
 export function vistaLogin() {
   const email = h('input', { type: 'email', name: 'email', autocomplete: 'username', required: true });
@@ -12,6 +13,18 @@ export function vistaLogin() {
   const campoCodigo = h('label', { hidden: true }, 'Código de la app autenticadora', codigo);
   const mensaje = h('div');
   const boton = h('button', { type: 'submit', class: 'primario' }, 'Ingresar');
+
+  // Si la inscripción en línea está abierta, se ofrece la prueba gratis
+  const inscribirse = h('p', { class: 'login-inscribirse' });
+  // Google y Microsoft sirven para entrar y para crear la cuenta la primera vez
+  const proveedores = h('div', {}, botonesProveedores(() => 'empresa', 'o ingrese con su correo y contraseña'));
+  api('/registro', { conEmisor: false, redirigir401: false })
+    .then((r) => {
+      if (!r.disponible) vaciar(proveedores);
+      if (r.disponible) vaciar(inscribirse, h('strong', {}, '¿Primera vez? '), h('a', { href: '#/registro', class: 'boton' }, 'Crear cuenta con correo y contraseña'),
+        h('span', { class: 'suave' }, `O use Google o Microsoft arriba. Incluye ${r.prueba_documentos} documentos de prueba.`));
+    })
+    .catch(() => {});
 
   const form = h('form', {
     onsubmit: async (e) => {
@@ -46,12 +59,13 @@ export function vistaLogin() {
     },
   },
   h('h1', {}, 'Ingresar'),
-  h('p', { class: 'suave' }, 'Use el correo y la contraseña que le entregó su proveedor.'),
+  proveedores,
   h('label', {}, 'Correo', email),
   h('label', {}, 'Contraseña', password),
   campoCodigo,
   mensaje,
-  boton);
+  boton,
+  inscribirse);
 
   // Presentación del servicio para quien todavía no lo tiene (y el contacto de ventas configurado)
   const contacto = h('p', { class: 'login-contacto' });

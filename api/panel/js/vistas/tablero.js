@@ -1,7 +1,7 @@
 // Inicio de la empresa: accesos rápidos, avisos (saldo, certificado), números del mes y últimos comprobantes.
 import { api } from '../api.js';
 import { h, vaciar, dinero, fecha, badge, mesActual, selectorMes, tabla, TIPOS, ESTADOS } from '../dom.js';
-import { contexto, empresaActual } from '../app.js';
+import { contexto, empresaActual, puede } from '../app.js';
 
 export async function vistaTablero(cont) {
   let periodo = mesActual();
@@ -10,7 +10,8 @@ export async function vistaTablero(cont) {
   async function cargar() {
     vaciar(cuerpo, h('p', { class: 'cargando' }, 'Cargando…'));
     const [est, ultimos] = await Promise.all([
-      api(`/reportes/estadisticas?anio=${periodo.anio}&mes=${periodo.mes}`),
+      // El cajero no ve los números del mes: su inicio son los accesos rápidos y los últimos comprobantes
+      puede('reportes') ? api(`/reportes/estadisticas?anio=${periodo.anio}&mes=${periodo.mes}`) : Promise.resolve(null),
       api('/facturas?limit=10'),
     ]);
     const emp = empresaActual();
@@ -25,8 +26,8 @@ export async function vistaTablero(cont) {
       }
     }
     if (emp && !emp.tiene_certificado) {
-      avisos.push(h('div', { class: 'aviso alerta' }, 'Esta empresa no tiene certificado digital cargado; no podrá emitir. ',
-        h('a', { href: contexto.esAdmin ? `#/empresas/${emp.id}` : '#/configuracion/cuenta' }, 'Revisar datos de la empresa')));
+      avisos.push(h('div', { class: 'aviso alerta' }, 'Esta empresa no tiene la llave criptográfica cargada; no podrá emitir. ',
+        h('a', { href: contexto.esAdmin ? `#/empresas/${emp.id}` : '#/bienvenida' }, contexto.esAdmin ? 'Revisar datos de la empresa' : 'Ver primeros pasos')));
     } else if (emp?.cert_vence) {
       const dias = Math.floor((new Date(emp.cert_vence) - new Date()) / 86400000);
       if (dias < 30) {
@@ -36,16 +37,16 @@ export async function vistaTablero(cont) {
       }
     }
 
-    const total = Object.values(est.comprobantes_por_estado).reduce((a, b) => a + b, 0);
+    const total = est ? Object.values(est.comprobantes_por_estado).reduce((a, b) => a + b, 0) : 0;
     vaciar(cuerpo,
       avisos,
-      h('div', { class: 'kpis' },
+      est && h('div', { class: 'kpis' },
         kpi('Ventas aceptadas del mes', dinero(est.ventas_aceptadas_crc)),
         kpi('IVA de ventas', dinero(est.iva_ventas_crc)),
         kpi('Comprobantes emitidos', total),
         kpi('Con error o rechazados', est.con_error_o_rechazados, est.con_error_o_rechazados > 0, '#/comprobantes'),
         kpi('Facturas de proveedores por aceptar', est.recibidos_sin_responder, est.recibidos_sin_responder > 0, '#/recepcion')),
-      h('div', { class: 'campos dos' },
+      est && h('div', { class: 'campos dos' },
         h('section', { class: 'tarjeta' }, h('h2', {}, 'Por estado'),
           tabla([{ titulo: 'Estado', valor: (r) => badge(r[0]) }, { titulo: 'Cantidad', num: true, valor: (r) => r[1] }],
             Object.entries(est.comprobantes_por_estado))),
@@ -67,7 +68,7 @@ export async function vistaTablero(cont) {
   vaciar(cont,
     h('div', { class: 'encabezado' }, h('div', {}, h('h1', {}, 'Inicio'),
       h('p', { class: 'suave ayuda-tipo' }, '¿Qué desea hacer hoy?')),
-      selectorMes(periodo, (p) => { periodo = p; cargar(); })),
+      puede('reportes') ? selectorMes(periodo, (p) => { periodo = p; cargar(); }) : null),
     accesosRapidos(),
     cuerpo);
   await cargar();
@@ -82,11 +83,11 @@ function kpi(etiqueta, valor, alerta = false, enlace = null) {
 function accesosRapidos() {
   const facturacion = empresaActual()?.facturacion_web !== false || contexto.esAdmin;
   const accesos = [
-    facturacion && ['#/factura-rapida', 'Factura rápida', 'Venta de contado'],
-    facturacion && ['#/emitir/01', 'Factura electrónica', 'Cliente con cédula'],
-    facturacion && ['#/emitir/04', 'Tiquete', 'Consumidor final'],
+    facturacion && puede('emitir') && ['#/factura-rapida', 'Factura rápida', 'Venta de contado'],
+    facturacion && puede('emitir') && ['#/emitir/01', 'Factura electrónica', 'Cliente con cédula'],
+    facturacion && puede('emitir') && ['#/emitir/04', 'Tiquete', 'Consumidor final'],
     ['#/comprobantes', 'Mis documentos', 'Ver, reenviar o anular'],
-    ['#/recepcion', 'Facturas de proveedores', 'Aceptar o rechazar'],
+    puede('recepcion') && ['#/recepcion', 'Facturas de proveedores', 'Aceptar o rechazar'],
   ].filter(Boolean);
   return h('div', { class: 'accesos' }, accesos.map(([href, titulo, ayuda], i) => h('a', { href, class: `acceso ${i === 0 ? 'principal' : ''}` },
     h('strong', {}, titulo), h('span', {}, ayuda))));

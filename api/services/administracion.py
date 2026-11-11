@@ -10,8 +10,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from api.models.database import (
-    AjustesVentas, BuzonCorreo, Consumo, DocumentoRecibido, Emisor, EstadoFactura, Factura, FacturaEvento,
-    Paquete, Plan, Suscripcion, utcnow,
+    AjustesVentas, BuzonCorreo, CobroMensual, Consumo, DocumentoRecibido, Emisor, EstadoFactura, Factura, FacturaEvento,
+    Paquete, Plan, SolicitudCompra, Suscripcion, Usuario, utcnow,
 )
 from api.models.schemas import TARIFAS_IVA, FacturaRequest
 from api.services import emision, saldo, suscripciones
@@ -47,6 +47,11 @@ def ajustes_a_dict(a: AjustesVentas, db: Session) -> dict:
         "codigo_cabys": a.codigo_cabys, "codigo_tarifa_iva": a.codigo_tarifa_iva,
         "precio_incluye_iva": a.precio_incluye_iva, "tipo_comprobante": a.tipo_comprobante, "medio_pago": a.medio_pago,
         "instrucciones_pago": a.instrucciones_pago, "contacto_ventas": a.contacto_ventas, "correo_avisos": a.correo_avisos,
+        "autoregistro": a.autoregistro, "prueba_documentos": a.prueba_documentos, "prueba_dias": a.prueba_dias,
+        "precio_web_mensual": str(a.precio_web_mensual) if a.precio_web_mensual else None, "moneda_web": a.moneda_web,
+        "precio_contabilidad_mensual": str(a.precio_contabilidad_mensual) if a.precio_contabilidad_mensual else None,
+        "precio_contador_mensual": str(a.precio_contador_mensual) if a.precio_contador_mensual else None,
+        "dias_para_pagar": a.dias_para_pagar,
     }
 
 
@@ -324,7 +329,7 @@ def tablero(db: Session) -> dict:
     s = get_settings()
     ahora = utcnow()
     hoy = ahora.astimezone(zona_cr())
-    empresas = list(db.scalars(select(Emisor).order_by(Emisor.nombre)))
+    empresas = list(db.scalars(select(Emisor).where(Emisor.solo_contabilidad.is_(False)).order_by(Emisor.nombre)))
     nombres = {e.id: e.nombre for e in empresas}
     control = saldo.control_activo()
     saldos = saldo.disponibles_por_emisor(db, [e.id for e in empresas]) if control else {}
@@ -405,7 +410,19 @@ def tablero(db: Session) -> dict:
             "principal": next((a for a in alertas if a["nivel"] != "info"), None),
         })
     activas = [x for x in estado_empresas if x["activo"]]
+    # Autoservicio: lo que el administrador solo supervisa
+    semana = ahora - timedelta(days=7)
+    nuevas = db.scalar(select(func.count()).select_from(Emisor).where(
+        Emisor.solo_contabilidad.is_(False), Emisor.created_at >= semana)) or 0
+    cuentas_nuevas = db.scalar(select(func.count()).select_from(Usuario).where(
+        Usuario.created_at >= semana, Usuario.es_admin.is_(False))) or 0
+    sin_empresa = db.scalar(select(func.count()).select_from(Usuario).where(
+        Usuario.es_admin.is_(False), Usuario.es_contador.is_(False), Usuario.emisor_id.is_(None), Usuario.activo.is_(True))) or 0
+    pagos = db.scalar(select(func.count()).select_from(SolicitudCompra).where(SolicitudCompra.estado == "PENDIENTE")) or 0
+    mensuales = db.scalar(select(func.count()).select_from(CobroMensual).where(CobroMensual.estado == "REPORTADO")) or 0
     return {
+        "empresas_nuevas_semana": nuevas, "cuentas_nuevas_semana": cuentas_nuevas,
+        "cuentas_sin_empresa": sin_empresa, "pagos_por_revisar": pagos, "mensualidades_por_confirmar": mensuales,
         "empresas_activas": len(activas),
         "empresas_con_errores": sum(1 for x in activas if x["errores"]),
         "empresas_con_alertas": sum(1 for x in activas if x["alertas"] and not x["errores"]),

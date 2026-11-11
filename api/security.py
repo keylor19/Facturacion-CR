@@ -23,8 +23,8 @@ from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBea
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from api.models.database import ApiKey, Emisor, get_db, utcnow
-from api.services import limites, suscripciones, usuarios
+from api.models.database import ApiKey, Emisor, get_db, utcnow, UsuarioEmpresa
+from api.services import limites, permisos, suscripciones, usuarios
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,8 @@ _bearer = HTTPBearer(auto_error=False)
 PREFIJO_LLAVE = "fcr_"
 # Rutas permitidas a un administrador sin 2FA (para que pueda activarla)
 RUTAS_SIN_2FA = "/api/v1/auth/"
+# Lo único que puede usar un contador externo
+RUTAS_CONTADOR = ("/api/v1/auth/", "/api/v1/contabilidad", "/api/v1/hacienda/", "/api/v1/reportes/", "/api/v1/servicios")
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,10 @@ class Principal:
     api_key_id: str | None
     usuario_id: str | None = None
     falta_2fa: bool = False     # administrador del panel que aún no activa la verificación en dos pasos
+    rol: str = "dueno"           # usuarios de empresa: dueno, contador o cajero (ver services/permisos.py)
+    # Contador externo: solo entra a la contabilidad de las empresas que tiene a cargo
+    es_contador: bool = False
+    empresas: tuple = ()
 
 
 def verificar_secreto(recibido: str | None, esperados: list[str]) -> bool:
@@ -84,13 +90,16 @@ def autenticar(
     db: Session = Depends(get_db),
 ) -> Principal:
     try:
-        principal = _identificar(api_key, bearer, db)
+        principal = _identificar(api_key, bearer, db, request.headers.get("X-Emisor-Id"))
     except HTTPException as exc:
         if exc.status_code == status.HTTP_401_UNAUTHORIZED:
             # Frena a quien prueba llaves o sesiones en masa desde una misma IP
             ip = request.client.host if request.client else "desconocida"
             limites.aplicar(f"fallo-auth:{ip}", get_settings().LIMITE_FALLOS_AUTH_MINUTO)
         raise
+    # El contador externo solo usa la contabilidad (y consultas a Hacienda): no factura ni administra
+    if principal.es_contador and not request.url.path.startswith(RUTAS_CONTADOR):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Su usuario de contador solo tiene acceso a la contabilidad")
     if principal.falta_2fa and not request.url.path.startswith(RUTAS_SIN_2FA):
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Active la verificación en dos pasos (Mi cuenta) para usar el panel como administrador",
@@ -101,15 +110,18 @@ def autenticar(
     return principal
 
 
-def _identificar(api_key: str | None, bearer: HTTPAuthorizationCredentials | None, db: Session) -> Principal:
+def _identificar(api_key: str | None, bearer: HTTPAuthorizationCredentials | None, db: Session,
+                 emisor_pedido: str | None = None) -> Principal:
     # 1) Sesión del panel web (Authorization: Bearer ses_...)
     if bearer and not api_key:
         usuario = usuarios.usuario_de_token(db, bearer.credentials) if len(bearer.credentials) <= 200 else None
         if usuario is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión inválida o vencida",
                                 headers={"WWW-Authenticate": "Bearer"})
+        if usuario.es_contador:
+            return _principal_contador(db, usuario, emisor_pedido)
         return Principal(es_admin=usuario.es_admin, emisor_id=usuario.emisor_id, api_key_id=None,
-                         usuario_id=str(usuario.id),
+                         usuario_id=str(usuario.id), rol="dueno" if usuario.es_admin else (usuario.rol or "dueno"),
                          falta_2fa=usuario.es_admin and not usuario.totp_activo and get_settings().exige_2fa_admin)
 
     # 2) API key (sistemas integrados)
@@ -128,6 +140,55 @@ def _identificar(api_key: str | None, bearer: HTTPAuthorizationCredentials | Non
         registro.ultimo_uso = ahora
         db.commit()
     return Principal(es_admin=registro.es_admin, emisor_id=registro.emisor_id, api_key_id=str(registro.id))
+
+
+def permiso(nombre: str):
+    """Dependencia: el usuario debe tener ese permiso según su rol (ver services/permisos.py)."""
+    def verificar(principal: Principal = Depends(autenticar)) -> Principal:
+        # La contabilidad es de personas (dueño o contador): ni administradores del servicio ni API keys
+        if nombre == "contabilidad" and (principal.es_admin or principal.api_key_id or not principal.usuario_id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "La contabilidad solo la ven el dueño de la empresa y su contador")
+        if not permisos.tiene(principal.rol, nombre):
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                f"Su usuario ({permisos.ROLES.get(principal.rol, principal.rol)}) no tiene permiso para "
+                                f"{permisos.DESCRIPCION[nombre]}. Pídaselo al dueño de la empresa.")
+        return principal
+    return verificar
+
+
+def contabilidad_habilitada(principal: Principal = Depends(permiso("contabilidad")),
+                            db: Session = Depends(get_db)) -> Principal:
+    """
+    La contabilidad tiene mensualidad: la del contador cubre todas las empresas que lleva; el
+    dueño que la lleva él mismo paga la de su empresa. Sin ella (o en mora) se le dice el precio.
+    """
+    from api.services import mensualidades
+    if principal.es_contador:
+        servicio, cliente = "contador", {"usuario_id": principal.usuario_id}
+    else:
+        servicio, cliente = "contabilidad", {"emisor_id": principal.emisor_id}
+    if not mensualidades.activo(db, servicio, **cliente):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, mensualidades.motivo(db, servicio, **cliente),
+                            headers={"X-Requiere-Servicio": servicio})
+    return principal
+
+
+def empresas_del_contador(db: Session, usuario_id: str) -> list[str]:
+    """Las que le asignó el administrador más las que él agregó solo para llevarles la contabilidad."""
+    asignadas = db.scalars(select(UsuarioEmpresa.emisor_id).join(Emisor, Emisor.id == UsuarioEmpresa.emisor_id)
+                           .where(UsuarioEmpresa.usuario_id == usuario_id, Emisor.activo.is_(True))
+                           .order_by(UsuarioEmpresa.created_at)).all()
+    propias = db.scalars(select(Emisor.id).where(Emisor.contador_id == usuario_id, Emisor.activo.is_(True))
+                         .order_by(Emisor.created_at)).all()
+    return list(dict.fromkeys([*asignadas, *propias]))
+
+
+def _principal_contador(db: Session, usuario, emisor_pedido: str | None) -> Principal:
+    """El contador opera sobre la empresa que pide en X-Emisor-Id (si la tiene a cargo); sin header, la primera."""
+    ids = empresas_del_contador(db, str(usuario.id))
+    elegido = emisor_pedido if emisor_pedido in ids else (ids[0] if ids else None)
+    return Principal(es_admin=False, emisor_id=elegido, api_key_id=None, usuario_id=str(usuario.id),
+                     rol="contador_externo", es_contador=True, empresas=tuple(ids))
 
 
 def require_admin(principal: Principal = Depends(autenticar)) -> Principal:
@@ -169,8 +230,10 @@ def emisor_actual(
     # Llave de una empresa: requiere la conexión por API habilitada (se paga con documentos, sin mensualidad)
     if principal.api_key_id and not principal.es_admin and not suscripciones.activo(db, emisor, "api"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, suscripciones.motivo_inactivo(db, emisor, "api"))
-    # Usuario del panel de una empresa: el panel web es un servicio adicional (pagado o en regalía)
-    if principal.usuario_id and not principal.es_admin and not suscripciones.activo(db, emisor, "facturacion_web"):
+    # Usuario del panel de una empresa: el panel web es un servicio adicional (pagado o en regalía).
+    # El contador externo no factura: su acceso no depende de ese servicio.
+    if (principal.usuario_id and not principal.es_admin and not principal.es_contador
+            and not suscripciones.activo(db, emisor, "facturacion_web")):
         raise HTTPException(status.HTTP_403_FORBIDDEN, suscripciones.motivo_inactivo(db, emisor, "facturacion_web"))
     return emisor
 

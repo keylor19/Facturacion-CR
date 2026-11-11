@@ -170,6 +170,22 @@ def test_tiquete_sin_receptor():
     assert root.find("{*}Receptor") is None
 
 
+def test_tiquete_con_solo_el_nombre_del_cliente():
+    root, _, _ = _generar(tipo_documento="04", receptor={"nombre": "Doña María"})
+    assert _texto(root, "Receptor/Nombre") == "Doña María"
+    assert root.find("{*}Receptor/{*}Identificacion") is None
+
+
+def test_factura_con_solo_el_nombre_se_rechaza():
+    with pytest.raises(ValidationError, match="cédula del cliente"):
+        FacturaRequest(**factura_payload(receptor={"nombre": "Doña María"}))
+
+
+def test_receptor_sin_nombre_ni_cedula_se_rechaza():
+    with pytest.raises(ValidationError):
+        FacturaRequest(**factura_payload(tipo_documento="04", receptor={"correo": "x@y.com"}))
+
+
 def test_factura_requiere_receptor():
     with pytest.raises(ValidationError):
         FacturaRequest(**factura_payload(receptor=None))

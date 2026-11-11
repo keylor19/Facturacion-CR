@@ -10,10 +10,10 @@ from api.models.schemas import (
     CajaAbrir, CajaCerrar, FacturaDetalleResponse, FacturaRequest, FacturaResponse, MovimientoCajaRequest,
 )
 from api.routes.facturas import _detalle, _emitir
-from api.security import Principal, autenticar, emisor_facturacion_web
+from api.security import Principal, autenticar, emisor_facturacion_web, permiso
 from api.services import auditoria, cajas
 
-router = APIRouter(prefix="/api/v1/cajas", tags=["facturación en línea: punto de venta"])
+router = APIRouter(prefix="/api/v1/cajas", tags=["facturación en línea: punto de venta"], dependencies=[Depends(permiso("pos"))])
 
 
 def _buscar(db: Session, emisor: Emisor, caja_id: UUID) -> Caja:

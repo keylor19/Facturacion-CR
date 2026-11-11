@@ -230,3 +230,19 @@ def factura_payload(**cambios) -> dict:
     }
     payload.update(cambios)
     return payload
+
+
+@pytest.fixture
+def contador(db, emisor, app_client):
+    """Encabezados de un contador al que el administrador le asignó la empresa de pruebas."""
+    from api.models.database import UsuarioEmpresa
+    from api.services import usuarios
+
+    u = usuarios.crear_usuario(db, "contador@despacho.cr", "Contadora", "Clave-Segura-2026", False, None,
+                               es_contador=True)
+    db.add(UsuarioEmpresa(usuario_id=u.id, emisor_id=emisor.id, rol="contador_externo"))
+    db.commit()
+    token = app_client.post("/api/v1/auth/login", json={"email": "contador@despacho.cr",
+                                                          "password": "Clave-Segura-2026"}).json()["token"]
+    # X-API-Key vacío: si la prueba también usa el cliente con API key, manda la sesión del contador
+    return {"Authorization": f"Bearer {token}", "X-Emisor-Id": emisor.id, "X-API-Key": ""}

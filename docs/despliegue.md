@@ -34,6 +34,10 @@ CALLBACK_TOKEN=<ver abajo>
 API_KEYS=                      # opcional; puede administrar solo con usuarios del panel
 DOCS_PUBLICAS=true             # para que los integradores vean /docs
 SMTP_HOST=… SMTP_USER=… SMTP_PASSWORD=… SMTP_FROM=facturas@sufacturacion.cr
+URL_PUBLICA=https://api.sufacturacion.cr   # enlaces de descarga por WhatsApp y de activación de cuentas
+ALERTA_URL=                    # opcional: recibe un aviso si falla el respaldo diario
+GOOGLE_CLIENT_ID= GOOGLE_CLIENT_SECRET=          # opcional: botón «Continuar con Google» (manual del administrador, 0.1)
+MICROSOFT_CLIENT_ID= MICROSOFT_CLIENT_SECRET=    # opcional: botón «Continuar con Microsoft»
 ```
 
 Genere los secretos:
@@ -68,9 +72,9 @@ Con `AMBIENTE=prod` la aplicación **no arranca** si falta algo crítico
 | `caddy` | HTTPS automático (Let's Encrypt, se renueva solo), redirección de HTTP a HTTPS, límite de 6 MB por solicitud |
 | `api` | API y panel web (no se expone directamente a internet) |
 | `worker` | Envía a Hacienda, consulta estados, correos, webhooks |
-| `beat` | Reintentos, consultas pendientes, avisos de certificados y paquetes por vencer |
+| `beat` | Reintentos, consultas pendientes, avisos de certificados y paquetes por vencer, facturas recurrentes (7:00) y recordatorios de cobro (8:00) |
 | `db` / `redis` | Base de datos y cola de trabajos |
-| `respaldo` | Respaldo diario de la base en `respaldos/` (se conservan `DIAS_RETENCION_RESPALDO` días) |
+| `respaldo` | Respaldo diario y verificado de la base en `respaldos/` (se conservan `DIAS_RETENCION_RESPALDO` días; si falla avisa a `ALERTA_URL`) |
 
 ## 5. Operación
 

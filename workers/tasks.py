@@ -18,8 +18,8 @@ from api.models.database import (
     ESTADOS_REENVIABLES, ESTADOS_FINALES, utcnow,
 )
 from api.services import (
-    administracion, buzon, catalogo_cabys, correo, emisores, hacienda_client, hacienda_publico, inventario, suscripciones,
-    webhooks,
+    administracion, buzon, catalogo_cabys, cobros, correo, emisores, hacienda_client, hacienda_publico, inventario,
+    mensualidades, recurrentes, suscripciones, webhooks,
 )
 from api.services.fechas import zona_cr
 from api.services.hacienda_auth import HaciendaAuthError
@@ -456,7 +456,7 @@ def revisar_suscripciones():
     db = SessionLocal()
     try:
         avisos = 0
-        for emisor in db.scalars(select(Emisor).where(Emisor.activo.is_(True))).all():
+        for emisor in db.scalars(select(Emisor).where(Emisor.activo.is_(True), Emisor.solo_contabilidad.is_(False))).all():
             for est in suscripciones.estados(db, emisor):
                 if not est["habilitado"] or est["vence"] is None:
                     continue
@@ -518,3 +518,131 @@ def revisar_buzones():
         return resultado
     finally:
         db.close()
+
+
+@celery_app.task
+def emitir_recurrentes():
+    """Emite las facturas recurrentes que tocan hoy y las encola para Hacienda."""
+    db = SessionLocal()
+    try:
+        nuevos = recurrentes.emitir_pendientes(db)
+    finally:
+        db.close()
+    for factura_id in nuevos:
+        _encolar(enviar_documento, "factura", factura_id)
+    logger.info("Facturas recurrentes emitidas: %s", len(nuevos))
+    return {"emitidas": len(nuevos)}
+
+
+def texto_recordatorio(emisor, fila: dict) -> tuple[str, str]:
+    empresa = emisor.nombre_comercial or emisor.nombre
+    asunto = f"Recordatorio de pago: factura {fila['consecutivo']} - {empresa}"
+    cuerpo = (
+        f"Estimado(a) {fila['cliente'] or 'cliente'}:\n\n"
+        f"Le recordamos que la factura {fila['consecutivo']} del {fila['fecha']} venció el {fila['vence']} "
+        f"({fila['dias_vencida']} día(s) de atraso).\n\n"
+        f"Saldo pendiente: {fila['moneda']} {float(fila['saldo']):,.2f}\n\n"
+        f"Si ya realizó el pago, por favor ignore este mensaje o responda con el comprobante para aplicarlo.\n\n"
+        f"Muchas gracias,\n{empresa}\n{emisor.correo}" + (f" · Tel. {emisor.telefono}" if emisor.telefono else "")
+    )
+    return asunto, cuerpo
+
+
+@celery_app.task
+def recordar_cobros():
+    """Correo a los clientes con facturas vencidas, a los 1, 8, 15, 30 y 60 días de atraso (una vez cada uno)."""
+    if not settings.smtp_configurado:
+        return {"status": "sin SMTP"}
+    db = SessionLocal()
+    enviados = 0
+    try:
+        for emisor in db.scalars(select(Emisor).where(Emisor.activo.is_(True), Emisor.recordar_cobros.is_(True))):
+            for fila in cobros.cartera(db, emisor.id)["facturas"]:
+                if fila["dias_vencida"] not in cobros.DIAS_RECORDATORIO or not fila["correo"]:
+                    continue
+                detalle = f"{fila['dias_vencida']} días"
+                ya = db.scalar(select(func.count()).select_from(FacturaEvento).where(
+                    FacturaEvento.factura_id == fila["factura_id"], FacturaEvento.evento == "RECORDATORIO_COBRO",
+                    FacturaEvento.detalle == detalle))
+                if ya:
+                    continue
+                asunto, cuerpo = texto_recordatorio(emisor, fila)
+                msg = correo.mensaje_simple(fila["correo"], asunto, cuerpo)
+                msg.replace_header("From", correo.remitente(emisor))
+                msg["Reply-To"] = emisor.correo
+                try:
+                    correo.enviar(msg)
+                except correo.CorreoError:
+                    logger.warning("No se pudo enviar el recordatorio de %s", fila["consecutivo"])
+                    continue
+                db.add(FacturaEvento(factura_id=fila["factura_id"], evento="RECORDATORIO_COBRO", detalle=detalle))
+                db.commit()
+                enviados += 1
+    finally:
+        db.close()
+    logger.info("Recordatorios de cobro enviados: %s", enviados)
+    return {"enviados": enviados}
+
+
+def _avisar_mensualidad(db, cobro, asunto: str, intro: str) -> bool:
+    destino = mensualidades.correo_cliente(db, cobro)
+    if not destino or not settings.smtp_configurado:
+        return False
+    a = administracion.ajustes(db)
+    lineas = "\n".join(f"  • {x['concepto']}: {cobro.moneda} {float(x['monto']):,.2f}" for x in cobro.lineas)
+    cuerpo = (f"{intro}\n\n{lineas}\n\nTotal: {cobro.moneda} {float(cobro.total):,.2f}\n"
+              f"Vence: {cobro.vence:%d/%m/%Y}\n\n"
+              + (f"Formas de pago:\n{a.instrucciones_pago.strip()}\n\n" if a.instrucciones_pago else "")
+              + "Al pagar, repórtelo en el panel: Mis servicios → Facturas (número del comprobante).")
+    msg = correo.mensaje_simple(destino, asunto, cuerpo)
+    if a.correo_avisos:
+        msg["Reply-To"] = a.correo_avisos
+    try:
+        correo.enviar(msg)
+        return True
+    except correo.CorreoError:
+        return False
+
+
+@celery_app.task
+def facturar_mensualidades():
+    """Día 1: factura de los servicios del mes anterior a cada cliente (proporcional a los días)."""
+    from datetime import date as _date
+    hoy = mensualidades.hoy()
+    anterior = (hoy.replace(day=1) - timedelta(days=1)).replace(day=1)
+    db = SessionLocal()
+    try:
+        creados = mensualidades.generar(db, _date(anterior.year, anterior.month, 1))
+        for cobro in creados:
+            factura = mensualidades.emitir_comprobante(db, cobro)
+            if factura is not None:
+                _encolar(enviar_documento, "factura", str(factura.id))
+            _avisar_mensualidad(db, cobro, f"Factura de sus servicios de {cobro.periodo:%m/%Y}",
+                                f"Le enviamos el detalle de sus servicios mensuales de {cobro.periodo:%m/%Y}. "
+                                "La factura electrónica le llega en un correo aparte.")
+    finally:
+        db.close()
+    logger.info("Facturas mensuales creadas: %s", len(creados))
+    return {"creadas": len(creados)}
+
+
+@celery_app.task
+def recordar_mensualidades():
+    """3 días antes del vencimiento, un recordatorio; el día después, el aviso de suspensión."""
+    from api.models.database import CobroMensual
+    hoy = mensualidades.hoy()
+    db = SessionLocal()
+    enviados = 0
+    try:
+        for cobro in db.scalars(select(CobroMensual).where(CobroMensual.estado == "PENDIENTE")):
+            if cobro.vence - timedelta(days=3) == hoy:
+                enviados += _avisar_mensualidad(db, cobro, f"Recordatorio: su factura de {cobro.periodo:%m/%Y} vence pronto",
+                                                "Le recordamos que su factura de servicios mensuales vence en 3 días.")
+            elif cobro.vence + timedelta(days=1) == hoy:
+                enviados += _avisar_mensualidad(db, cobro, f"Servicios suspendidos: factura de {cobro.periodo:%m/%Y} vencida",
+                                                "Su factura venció y los servicios mensuales (sistema en línea, contabilidad o "
+                                                "cuenta de contador) quedaron suspendidos. Sus documentos ya pagados siguen "
+                                                "disponibles para facturar por API. Al pagar y reportarlo se reactivan.")
+    finally:
+        db.close()
+    return {"enviados": enviados}

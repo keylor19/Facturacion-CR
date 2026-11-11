@@ -5,10 +5,10 @@ from sqlalchemy.orm import Session
 
 from api.models.database import BuzonCorreo, Emisor, get_db
 from api.models.schemas import BuzonCorreoRequest
-from api.security import emisor_actual
+from api.security import emisor_actual, permiso
 from api.services import buzon
 
-router = APIRouter(prefix="/api/v1/buzon-correo", tags=["comprobantes recibidos"])
+router = APIRouter(prefix="/api/v1/buzon-correo", tags=["comprobantes recibidos"], dependencies=[Depends(permiso("recepcion"))])
 
 
 def _buzon(db: Session, emisor: Emisor) -> BuzonCorreo | None:

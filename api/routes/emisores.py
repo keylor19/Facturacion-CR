@@ -13,10 +13,9 @@ from api.models.schemas import (
     EmisorResponse, WebhookRequest,
 )
 from api.security import Principal, crear_api_key, require_admin
-from api.services import auditoria, emisores, saldo, webhooks
+from api.services import arranque, auditoria, emisores, saldo, webhooks
 from api.services.cifrado import CifradoError
-from api.services.firma import FirmaError, inspeccionar_certificado
-from api.services.hacienda_auth import HaciendaAuthError, obtener_token
+from api.services.firma import FirmaError
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,8 @@ def crear_emisor(payload: EmisorCrear, request: Request,
 
 @router.get("/emisores", response_model=list[EmisorResponse])
 def listar_emisores(activo: bool | None = None, db: Session = Depends(get_db)):
-    query = select(Emisor).order_by(Emisor.nombre)
+    # Las empresas que un contador agregó solo para su contabilidad no son clientes del servicio
+    query = select(Emisor).where(Emisor.solo_contabilidad.is_(False)).order_by(Emisor.nombre)
     if activo is not None:
         query = query.where(Emisor.activo.is_(activo))
     lista = list(db.scalars(query))
@@ -130,22 +130,7 @@ def guardar_credenciales(emisor_id: UUID, payload: CredencialesHaciendaRequest, 
 @router.post("/emisores/{emisor_id}/probar-conexion")
 def probar_conexion(emisor_id: UUID, db: Session = Depends(get_db)):
     """Verifica credenciales de Hacienda (obtiene un token) y el certificado."""
-    emisor = _emisor(db, emisor_id)
-    resultado = {"ambiente": emisor.ambiente}
-    try:
-        obtener_token(emisor, forzar=True)
-        resultado["hacienda"] = "ok"
-    except HaciendaAuthError as exc:
-        resultado["hacienda"] = f"error: {exc}"
-    try:
-        p12, password = emisores.certificado(emisor)
-        info = inspeccionar_certificado(p12, password)
-        resultado["certificado"] = "ok" if info["dias_para_vencer"] >= 0 else "vencido"
-        resultado["certificado_dias_para_vencer"] = info["dias_para_vencer"]
-    except (emisores.EmisorIncompletoError, FirmaError, CifradoError) as exc:
-        resultado["certificado"] = f"error: {exc}"
-    resultado["ok"] = resultado.get("hacienda") == "ok" and resultado.get("certificado") == "ok"
-    return resultado
+    return arranque.probar_conexion(_emisor(db, emisor_id))
 
 
 @router.put("/emisores/{emisor_id}/webhook")

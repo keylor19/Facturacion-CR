@@ -1,0 +1,8 @@
+:root { --texto: #1c2733; --suave: #5b6b7d; --fondo: #f3f6fb; --azul: #1f5fbf; }
+body { margin: 0; background: var(--fondo); color: var(--texto); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; background: #fff; }
+h1 { font-size: 28px; line-height: 1.25; }
+h2 { font-size: 19px; margin-top: 28px; }
+a { color: var(--azul); }
+.borrador { background: #fff4d6; border: 1px solid #f0c674; padding: 10px 14px; border-radius: 8px; font-size: 14px; }
+@media print { .borrador { display: none; } }

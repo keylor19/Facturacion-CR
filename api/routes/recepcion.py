@@ -11,14 +11,14 @@ from api.models.database import get_db, DocumentoRecibido, Emisor, EstadoFactura
 from api.models.schemas import (
     DocumentoRecibidoRequest, DocumentoRecibidoResponse, MensajeReceptorRequest, EventoResponse,
 )
-from api.security import emisor_actual
+from api.security import emisor_actual, permiso
 from api.services import recepcion
 from api.services.emision import EmisionError
 from api.routes.facturas import informar_saldo
 from api.services.fechas import zona_cr
 from workers.tasks import enviar_documento, consultar_documento
 
-router = APIRouter(prefix="/api/v1/recepcion", tags=["comprobantes recibidos"])
+router = APIRouter(prefix="/api/v1/recepcion", tags=["comprobantes recibidos"], dependencies=[Depends(permiso("recepcion"))])
 
 
 def _respuesta(d: DocumentoRecibido) -> DocumentoRecibidoResponse:

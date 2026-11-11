@@ -58,13 +58,16 @@ def a_respuesta(u: Usuario) -> UsuarioResponse:
     return UsuarioResponse(
         id=str(u.id), email=u.email, nombre=u.nombre, es_admin=u.es_admin,
         emisor_id=str(u.emisor_id) if u.emisor_id else None, activo=u.activo, ultimo_login=u.ultimo_login,
-        dos_pasos=bool(u.totp_activo),
+        dos_pasos=bool(u.totp_activo), rol=u.rol or "dueno",
+        es_contador=bool(u.es_contador),
     )
 
 
-def crear_usuario(db: Session, email: str, nombre: str, password: str, es_admin: bool, emisor_id: str | None) -> Usuario:
+def crear_usuario(db: Session, email: str, nombre: str, password: str, es_admin: bool, emisor_id: str | None,
+                  rol: str = "dueno", es_contador: bool = False) -> Usuario:
     u = Usuario(email=email.strip().lower(), nombre=nombre, password_hash=hash_password(password),
-                es_admin=es_admin, emisor_id=emisor_id)
+                es_admin=es_admin, emisor_id=emisor_id, es_contador=es_contador,
+                rol="contador_externo" if es_contador else "dueno" if es_admin else rol)
     db.add(u)
     db.commit()
     return u
@@ -83,7 +86,6 @@ def iniciar_sesion(db: Session, email: str, password: str, ip: str | None,
                    codigo: str | None = None) -> tuple[str, Sesion]:
     """Valida credenciales (y el código 2FA si está activo) y crea una sesión."""
     global _HASH_FICTICIO
-    s = get_settings()
     ahora = utcnow()
     usuario = db.scalar(select(Usuario).where(Usuario.email == email.strip().lower()))
 
@@ -116,10 +118,16 @@ def iniciar_sesion(db: Session, email: str, password: str, ip: str | None,
 
     usuario.intentos_fallidos = 0
     usuario.bloqueado_hasta = None
+    return crear_sesion(db, usuario, ip)
+
+
+def crear_sesion(db: Session, usuario: Usuario, ip: str | None) -> tuple[str, Sesion]:
+    """Abre una sesión del panel (después de la contraseña o de Google / Microsoft)."""
+    s = get_settings()
+    ahora = utcnow()
     usuario.ultimo_login = ahora
     # Limpieza de sesiones vencidas del usuario
     db.execute(delete(Sesion).where(Sesion.usuario_id == usuario.id, Sesion.expira < ahora))
-
     token = "ses_" + secrets.token_urlsafe(32)
     sesion = Sesion(usuario_id=usuario.id, token_hash=_hash_token(token),
                     expira=ahora + timedelta(hours=s.SESION_HORAS), ip=(ip or "")[:64])

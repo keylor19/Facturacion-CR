@@ -10,7 +10,7 @@ import { vistaPuntoVenta, vistaCajas, vistaDetalleCaja } from './vistas/puntoVen
 import { vistaDescargas } from './vistas/descargas.js';
 import { vistaFacturaRapida } from './vistas/facturaRapida.js';
 import { vistaRecepcion } from './vistas/recepcion.js';
-import { vistaReportes } from './vistas/reportes.js';
+import { vistaReportes, vistaD104 } from './vistas/reportes.js';
 import { vistaConsultas } from './vistas/consultas.js';
 import { vistaEmpresas, vistaDetalleEmpresa } from './vistas/empresas.js';
 import { vistaTableroAdmin, vistaAjustesVentas, vistaContabilidad } from './vistas/admin.js';
@@ -23,12 +23,51 @@ import { vistaClientes, vistaCargarClientes, vistaReporteClientes } from './vist
 import { vistaProductos, vistaCargarProductos, vistaReporteProductos, vistaCombos } from './vistas/productos.js';
 import { vistaCategorias, vistaDescuentos } from './vistas/promociones.js';
 import { vistaInventario } from './vistas/inventario.js';
-import { vistaPagos, vistaComprobantesPago } from './vistas/pagos.js';
+import { vistaComprobantesPago } from './vistas/pagos.js';
+import { vistaCuentasPorCobrar, vistaEstadoCuenta } from './vistas/cobros.js';
+import { vistaRecurrentes } from './vistas/recurrentes.js';
+import { vistaBienvenida } from './vistas/bienvenida.js';
+import {
+  vistaRegistro, vistaConfirmar, recibirOauth, vistaErrorOauth, vistaInscribirEmpresa,
+} from './vistas/registro.js';
+import { vistaSolicitudes } from './vistas/comprar.js';
+import { vistaServicios, vistaMensualidades } from './vistas/servicios.js';
+import {
+  vistaContaInicio, vistaContaCuentas, vistaContaAsientos, vistaContaDocumentos, vistaContaComprobacion,
+  vistaContaResultados, vistaContaBalance, vistaContaMayor, vistaContaPeriodos, vistaContaCierre,
+} from './vistas/contabilidad.js';
 import { vistaInformacionCuenta, vistaActividadEconomica } from './vistas/configuracion.js';
 
 export const contexto = {
   usuario: null, esAdmin: false, empresas: [], controlSaldo: false, saldoAlerta: 20, debeActivar2fa: false,
+  rol: 'dueno', permisos: [], esContador: false, faltaEmpresa: false,
 };
+
+// Permiso que pide cada pantalla según el rol del usuario (dueño, contador o cajero).
+// Las notas van antes que el resto de #/emitir porque se revisan en orden.
+const PERMISO_RUTA = [
+  [/^#\/emitir\/0[23]\b/, 'anular'],
+  [/^#\/(emitir|factura-rapida|proformas?|preliminares|recurrentes)\b/, 'emitir'],
+  [/^#\/(punto-venta|cajas)\b/, 'pos'],
+  [/^#\/recepcion\b/, 'recepcion'],
+  // IVA, D-104 y todo lo contable es solo del contador
+  [/^#\/(reportes|d104|contabilidad|conta\/)/, 'contabilidad'],
+  [/^#\/(descargas|clientes\/reporte|productos\/reporte)\b/, 'reportes'],
+  [/^#\/(productos\/cargar|inventario|categorias|descuentos|combos)\b/, 'catalogo'],
+  [/^#\/clientes\/cargar\b/, 'clientes'],
+  [/^#\/(pagos|comprobantes-pago|estado-cuenta)\b/, 'cobrar'],
+  [/^#\/usuarios\b/, 'usuarios'],
+];
+
+export const puede = (permiso) => (contexto.esAdmin && permiso !== 'contabilidad') || contexto.permisos.includes(permiso);
+
+// Pantallas que puede abrir el contador (todo lo demás lo devuelve a su inicio)
+const RUTAS_CONTADOR = /^#\/(contabilidad|conta\/|reportes$|d104$|consultas$|cuenta$|servicios$)/;
+
+function rutaPermitida(ruta) {
+  const regla = PERMISO_RUTA.find(([re]) => re.test(ruta));
+  return !regla || puede(regla[1]);
+}
 
 const RUTAS = [
   [/^#\/tablero$/, vistaTablero, true],
@@ -48,13 +87,30 @@ const RUTAS = [
   [/^#\/recepcion$/, vistaRecepcion, true],
   [/^#\/reportes$/, vistaReportes, true],
   [/^#\/consultas$/, vistaConsultas, false],
-  [/^#\/pagos$/, vistaPagos, true],
+  [/^#\/pagos$/, vistaCuentasPorCobrar, true],
+  [/^#\/estado-cuenta\/([^/]+)$/, vistaEstadoCuenta, true],
+  [/^#\/recurrentes$/, vistaRecurrentes, true],
+  [/^#\/d104$/, vistaD104, true],
+  [/^#\/bienvenida$/, vistaBienvenida, true],
+  [/^#\/contabilidad$/, vistaContaInicio, false],
+  [/^#\/conta\/cuentas$/, vistaContaCuentas, true],
+  [/^#\/conta\/asientos$/, vistaContaAsientos, true],
+  [/^#\/conta\/documentos$/, vistaContaDocumentos, true],
+  [/^#\/conta\/comprobacion$/, vistaContaComprobacion, true],
+  [/^#\/conta\/resultados$/, vistaContaResultados, true],
+  [/^#\/conta\/balance$/, vistaContaBalance, true],
+  [/^#\/conta\/mayor$/, vistaContaMayor, true],
+  [/^#\/conta\/periodos$/, vistaContaPeriodos, true],
+  [/^#\/conta\/cierre$/, vistaContaCierre, true],
   [/^#\/comprobantes-pago$/, vistaComprobantesPago, true],
   [/^#\/empresas$/, vistaEmpresas, false],
   [/^#\/empresas\/([\w-]+)$/, vistaDetalleEmpresa, false],
   [/^#\/empresas\/([\w-]+)\/(\w+)$/, vistaDetalleEmpresa, false],
   [/^#\/admin$/, vistaTableroAdmin, false],
   [/^#\/admin\/ajustes$/, vistaAjustesVentas, false],
+  [/^#\/admin\/solicitudes$/, vistaSolicitudes, false],
+  [/^#\/admin\/mensualidades$/, vistaMensualidades, false],
+  [/^#\/servicios$/, vistaServicios, false],
   [/^#\/admin\/contabilidad$/, vistaContabilidad, false],
   [/^#\/usuarios$/, vistaUsuarios, false],
   [/^#\/cuenta$/, vistaCuenta, false],
@@ -76,7 +132,7 @@ const RUTAS = [
 ];
 
 // Rutas del módulo de facturación en línea (se ocultan si la empresa no lo tiene)
-const MODULO_FACTURACION = /^#\/(emitir|factura-rapida|punto-venta|cajas|proformas?|preliminares|clientes|productos|inventario|pagos|categorias|descuentos|combos)\b/;
+const MODULO_FACTURACION = /^#\/(emitir|factura-rapida|punto-venta|cajas|proformas?|preliminares|clientes|productos|inventario|pagos|estado-cuenta|recurrentes|categorias|descuentos|combos)\b/;
 
 // Menú principal. Cada opción: [ruta, texto, qué hace (ayuda), solo administradores].
 // { seccion: '…' } agrupa opciones dentro del desplegable para que se entienda qué hacer.
@@ -92,6 +148,7 @@ const MENU = [
     ['#/emitir/02', 'Nota de débito', 'Cobrar un monto adicional a una factura'],
     { seccion: 'Otros documentos' },
     ['#/proforma/nueva', 'Proforma o cotización', 'Sin validez fiscal; luego se convierte en factura'],
+    ['#/recurrentes', 'Facturas recurrentes', 'Alquileres y mensualidades que se emiten solos'],
     ['#/emitir/08', 'Factura de compra', 'Compra a un proveedor que no factura'],
     ['#/emitir/09', 'Factura de exportación', 'Venta a un cliente en el extranjero'],
   ] },
@@ -104,7 +161,7 @@ const MENU = [
     { seccion: 'Lo que compré' },
     ['#/recepcion', 'Facturas de proveedores', 'Aceptar o rechazar ante Hacienda'],
     { seccion: 'Cobros' },
-    ['#/pagos', 'Facturas por cobrar', 'Registrar abonos de ventas a crédito'],
+    ['#/pagos', 'Cuentas por cobrar', 'Saldos, atrasos, abonos y estado de cuenta por cliente'],
     ['#/comprobantes-pago', 'Recibos de pago', 'Recibos electrónicos emitidos'],
     { seccion: 'Respaldo' },
     ['#/descargas', 'Descargar XML y PDF', 'Todos los documentos de un mes en un ZIP'],
@@ -122,22 +179,66 @@ const MENU = [
     ['#/productos/cargar', 'Importar productos', 'Cargar muchos desde Excel (CSV)'],
   ] },
   { titulo: 'Reportes', icono: 'grafico', items: [
-    { seccion: 'Impuestos' },
-    ['#/reportes', 'Reporte de IVA', 'Resumen mensual para la declaración D-104'],
     { seccion: 'Listados' },
     ['#/clientes/reporte', 'Reporte de clientes', 'Ventas por cliente'],
     ['#/productos/reporte', 'Reporte de productos', 'Ventas por producto'],
     { seccion: 'Hacienda' },
     ['#/consultas', 'Consultas a Hacienda', 'Cédulas, CABYS, exoneraciones y tipo de cambio'],
   ] },
+  // Solo el dueño de la empresa (sus demás usuarios no la ven)
+  { titulo: 'Contabilidad', icono: 'caja', items: [
+    { seccion: 'Del mes' },
+    ['#/conta/documentos', 'Comprobantes del mes', 'Contabilizar ventas, compras y costo de ventas'],
+    ['#/conta/asientos', 'Libro diario', 'Asientos manuales y automáticos'],
+    ['#/conta/periodos', 'Cierre de meses', 'Bloquear los meses ya declarados'],
+    ['#/conta/cierre', 'Cierre del año', 'Asiento de cierre anual y su archivo digital'],
+    { seccion: 'Estados financieros' },
+    ['#/conta/balance', 'Balance general', 'Activo, pasivo y patrimonio a una fecha'],
+    ['#/conta/resultados', 'Estado de resultados', 'Ingresos, costos y gastos de un período'],
+    ['#/conta/comprobacion', 'Balance de comprobación', 'Sumas y saldos de todas las cuentas'],
+    ['#/conta/mayor', 'Libro mayor', 'Movimientos de una cuenta'],
+    { seccion: 'Impuestos' },
+    ['#/reportes', 'Reporte de IVA', 'Ventas, compras e IVA del mes; libros en Excel'],
+    ['#/d104', 'Borrador D-104', 'Montos listos para copiar a TRIBU-CR'],
+    { seccion: 'Configuración' },
+    ['#/conta/cuentas', 'Catálogo de cuentas', 'Cuentas de la empresa (base NIIF para PYMES)'],
+  ] },
   { titulo: 'Configuración', icono: 'engranaje', items: [
     { seccion: 'Mi empresa' },
+    ['#/bienvenida', 'Primeros pasos', 'Llave criptográfica, usuario de Hacienda y lo que falta'],
     ['#/configuracion/cuenta', 'Datos de la empresa', 'Nombre, certificado y estado del servicio'],
     ['#/configuracion/actividad', 'Actividad económica', 'La registrada en Hacienda'],
     ['#/saldo', 'Saldo de documentos', 'Cuántas facturas le quedan disponibles'],
+    ['#/servicios', 'Mis servicios y facturas', 'Precio de cada mensualidad, activar y pagar'],
     { seccion: 'Usuarios' },
     ['#/cuenta', 'Mi usuario', 'Contraseña y verificación en dos pasos'],
-    ['#/usuarios', 'Usuarios', 'Quién puede entrar al sistema', true],
+    ['#/usuarios', 'Usuarios', 'Quién entra al sistema y qué puede hacer (dueño, contador, cajero)'],
+  ] },
+];
+
+// El contador: solo la contabilidad de las empresas que tiene a cargo.
+const MENU_CONTADOR = [
+  { titulo: 'Contabilidad', icono: 'factura', items: [
+    ['#/contabilidad', 'Mis empresas', 'Las empresas que lleva y cómo va cada una'],
+    { seccion: 'Del mes' },
+    ['#/conta/documentos', 'Comprobantes del mes', 'Contabilizar ventas y compras; cargar XML'],
+    ['#/conta/asientos', 'Libro diario', 'Asientos manuales y automáticos'],
+    ['#/conta/periodos', 'Cierre de meses', 'Bloquear los meses ya declarados'],
+    ['#/conta/cierre', 'Cierre del año', 'Asiento de cierre anual y su archivo digital'],
+    { seccion: 'Configuración' },
+    ['#/conta/cuentas', 'Catálogo de cuentas', 'Cuentas de la empresa (base NIIF para PYMES)'],
+    ['#/servicios', 'Mi mensualidad', 'Precio de su cuenta de contador y sus facturas'],
+  ] },
+  { titulo: 'Estados financieros', icono: 'grafico', items: [
+    ['#/conta/balance', 'Balance general', 'Activo, pasivo y patrimonio a una fecha'],
+    ['#/conta/resultados', 'Estado de resultados', 'Ingresos, costos y gastos de un período'],
+    ['#/conta/comprobacion', 'Balance de comprobación', 'Sumas y saldos de todas las cuentas'],
+    ['#/conta/mayor', 'Libro mayor', 'Movimientos de una cuenta'],
+  ] },
+  { titulo: 'Impuestos', icono: 'carpeta', items: [
+    ['#/reportes', 'Reporte de IVA', 'Ventas, compras e IVA del mes; libros en Excel'],
+    ['#/d104', 'Borrador D-104', 'Montos listos para copiar a TRIBU-CR'],
+    ['#/consultas', 'Consultas a Hacienda', 'Cédulas, CABYS, exoneraciones y tipo de cambio'],
   ] },
 ];
 
@@ -149,6 +250,8 @@ const MENU_ADMIN = [
   ] },
   { titulo: 'Ventas', icono: 'grafico', items: [
     ['#/planes', 'Planes y ventas', 'Paquetes de documentos, mensualidades e ingresos'],
+    ['#/admin/solicitudes', 'Pagos por revisar', 'Compras en línea pagadas por SINPE o transferencia'],
+    ['#/admin/mensualidades', 'Mensualidades', 'Facturas mensuales de los servicios y sus pagos'],
     ['#/admin/contabilidad', 'Contabilidad', 'Ventas del mes con su comprobante, IVA y libros para el contador'],
     ['#/admin/ajustes', 'Facturación y avisos', 'Quién factura las ventas y qué dice el correo de pocos documentos'],
   ] },
@@ -187,13 +290,17 @@ function icono(nombre, clase = 'icono') {
 }
 
 export async function cargarContexto() {
-  const yo = await api('/auth/yo', { conEmisor: false });
+  const yo = await api('/auth/yo');
   contexto.usuario = yo.usuario;
   contexto.esAdmin = yo.es_admin;
   contexto.empresas = yo.empresas;
   contexto.controlSaldo = yo.control_saldo;
   contexto.saldoAlerta = yo.saldo_alerta;
   contexto.debeActivar2fa = !!yo.debe_activar_2fa;
+  contexto.rol = yo.rol || 'dueno';
+  contexto.permisos = yo.permisos || [];
+  contexto.esContador = !!yo.es_contador;
+  contexto.faltaEmpresa = !!yo.falta_empresa;
   if (!contexto.empresas.some((e) => e.id === sesion.emisorId)) {
     sesion.emisorId = contexto.empresas[0]?.id || null;
   }
@@ -218,8 +325,9 @@ function selectorEmpresa() {
   if (contexto.empresas.length === 1) sel.disabled = true;
   const emp = empresaActual();
   return h('div', { class: 'empresa' }, sel,
-    emp ? h('span', { class: `badge ${emp.ambiente}` }, emp.ambiente === 'prod' ? 'Producción' : 'Pruebas') : null,
-    indicadorSaldo(emp));
+    contexto.esContador ? h('span', { class: 'badge prod' }, 'Contabilidad') : [
+      emp ? h('span', { class: `badge ${emp.ambiente}` }, emp.ambiente === 'prod' ? 'Producción' : 'Pruebas') : null,
+      indicadorSaldo(emp)]);
 }
 
 function indicadorSaldo(emp) {
@@ -273,15 +381,15 @@ function grupoMenu(titulo, iconoNombre, items, ruta, clase = '') {
 
 // Quita opciones no permitidas y los títulos de sección que quedan sin opciones.
 function filtrarItems(items) {
-  const permitidos = items.filter((it) => !esOpcion(it) || ((!it[3] || contexto.esAdmin) && moduloDisponible(it[0])));
+  const permitidos = items.filter((it) => !esOpcion(it) || ((!it[3] || contexto.esAdmin) && moduloDisponible(it[0]) && rutaPermitida(it[0])));
   return permitidos.filter((it, i) => esOpcion(it) || esOpcion(permitidos[i + 1] || {}));
 }
 
-export const inicio = () => (contexto.esAdmin ? '#/admin' : '#/tablero');
+export const inicio = () => (contexto.esAdmin ? '#/admin' : contexto.esContador ? '#/contabilidad' : '#/tablero');
 
 function diseno(ruta) {
   const admin = contexto.esAdmin;
-  const grupos = (admin ? MENU_ADMIN : MENU)
+  const grupos = (admin ? MENU_ADMIN : contexto.esContador ? MENU_CONTADOR : MENU)
     .map((g) => ({ ...g, items: filtrarItems(g.items) }))
     .filter((g) => g.items.some(esOpcion));
   const usuario = contexto.usuario;
@@ -289,7 +397,7 @@ function diseno(ruta) {
   const nav = h('nav', { class: 'menu', 'aria-label': 'Principal' },
     h('a', { href: inicio(), class: `menu-inicio ${ruta === inicio() ? 'activo' : ''}`, title: 'Inicio', 'aria-label': 'Inicio' }, icono('inicio')),
     grupos.map((g) => grupoMenu(g.titulo, g.icono, g.items, ruta)),
-    !admin && moduloDisponible('#/emitir') && empresaActual()
+    !admin && moduloDisponible('#/emitir') && empresaActual() && puede('emitir')
       ? h('a', { href: '#/emitir/01', class: 'boton primario nueva-factura' }, icono('mas'), 'Nueva factura') : null);
   const alternar = h('button', { type: 'button', class: 'menu-movil', 'aria-label': 'Menú', 'aria-expanded': 'false', onclick: () => {
     const abierto = nav.classList.toggle('visible');
@@ -321,14 +429,24 @@ function pantallaSinPanel(emp) {
       h('h1', {}, emp.nombre),
       h('p', {}, 'Su servicio de facturación electrónica funciona conectado a su sistema (API): '
         + 'sus comprobantes se emiten y se envían a Hacienda desde allí.'),
-      h('div', { class: 'aviso info' }, 'Su plan no incluye el panel web para consultar y emitir desde el navegador. '
-        + 'Si desea agregarlo, contacte a su proveedor del servicio.'))));
+      h('div', { class: 'aviso info' }, 'El sistema en línea para facturar desde el navegador no está activo (o está suspendido por '
+        + 'una factura vencida). Puede ver su precio, activarlo o pagar en «Mis servicios».'),
+      h('a', { href: '#/servicios', class: 'boton primario' }, 'Mis servicios y facturas'))));
 }
 
 export async function enrutar() {
   const app = document.getElementById('app');
   const ruta = location.hash || '#/tablero';
 
+  // Vuelta de Google / Microsoft
+  const oauth = ruta.match(/^#\/oauth\/(ses_[\w-]+)$/);
+  if (oauth) { recibirOauth(oauth[1]); enrutar(); return; }
+  const errorOauth = ruta.match(/^#\/oauth-error\/(\w+)$/);
+  if (errorOauth) { vaciar(app, vistaErrorOauth(errorOauth[1])); return; }
+  // Pantallas sin sesión: inscripción propia y confirmación del correo
+  if (ruta === '#/registro') { vaciar(app, vistaRegistro()); return; }
+  const confirmar = ruta.match(/^#\/confirmar\/([\w-]+)$/);
+  if (confirmar) { vaciar(app, vistaConfirmar(confirmar[1])); return; }
   if (ruta === '#/login' || !sesion.token) {
     vaciar(app, vistaLogin());
     return;
@@ -340,9 +458,13 @@ export async function enrutar() {
   if (contexto.debeActivar2fa && ruta !== '#/cuenta') { location.hash = '#/cuenta'; return; }
   // El inicio del administrador es su tablero, no el de facturación de una empresa
   if (contexto.esAdmin && ruta === '#/tablero') { location.hash = '#/admin'; return; }
+  // Cuenta nueva que va a facturar: primero inscribe su empresa
+  if (contexto.faltaEmpresa && ruta !== '#/cuenta') { vaciar(app, vistaInscribirEmpresa(salir)); return; }
+  // El contador solo usa la contabilidad
+  if (contexto.esContador && !RUTAS_CONTADOR.test(ruta)) { location.hash = '#/contabilidad'; return; }
   // El panel web es un servicio adicional: sin él, la empresa factura solo por API
   const emp = empresaActual();
-  if (!contexto.esAdmin && emp && emp.facturacion_web === false && ruta !== '#/cuenta') {
+  if (!contexto.esAdmin && !contexto.esContador && emp && emp.facturacion_web === false && !['#/cuenta', '#/servicios'].includes(ruta)) {
     vaciar(app, pantallaSinPanel(emp));
     return;
   }
@@ -357,6 +479,11 @@ export async function enrutar() {
       'La facturación en línea no está activa para esta empresa. Contacte a su proveedor para activarla.'));
     return;
   }
+  if (!rutaPermitida(ruta)) {
+    vaciar(contenido, h('div', { class: 'aviso info' },
+      'Su usuario no tiene permiso para esta sección. Si la necesita, pídasela al dueño de la empresa.'));
+    return;
+  }
   if (requiereEmpresa && !empresaActual()) {
     vaciar(contenido, h('div', { class: 'aviso info' },
       contexto.esAdmin ? 'Registre primero una empresa en la sección Empresas.' : 'Su usuario no tiene una empresa asignada.'));
@@ -365,7 +492,12 @@ export async function enrutar() {
   try {
     await vista(contenido, ...ruta.match(re).slice(1));
   } catch (e) {
-    if (e.status !== 401) {
+    if (e.headers?.get?.('X-Requiere-Servicio')) {
+      // Servicio con mensualidad sin activar (o suspendido): se le dice el precio y dónde activarlo
+      vaciar(contenido, h('section', { class: 'tarjeta' }, h('h2', {}, 'Este servicio tiene mensualidad'),
+        h('div', { class: 'aviso info' }, e.message),
+        h('a', { href: '#/servicios', class: 'boton primario' }, 'Ver precio y activarlo')));
+    } else if (e.status !== 401) {
       vaciar(contenido, h('div', { class: 'aviso error' }, e.message));
       toast(e.message, 'error');
     }

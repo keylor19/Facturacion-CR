@@ -185,3 +185,102 @@ def generar_pdf(factura: Factura, titulo_documento: str | None = None, notas_ext
 
     doc.build(partes)
     return buffer.getvalue()
+
+
+# --------------------------------------------------------------------------
+# Tiquete para impresora térmica (rollo de 80 mm o 58 mm)
+# --------------------------------------------------------------------------
+ANCHOS_ROLLO = {"80mm": 80 * mm, "58mm": 58 * mm}
+
+
+def generar_ticket(factura: Factura, rollo: str = "80mm") -> bytes:
+    """
+    Comprobante en una sola columna para impresora térmica. El alto de la página se
+    ajusta al contenido para que no salga papel en blanco al final.
+    """
+    ancho = ANCHOS_ROLLO[rollo]
+    margen = 3 * mm
+    util = ancho - 2 * margen - 12  # el marco deja 6 pt de relleno por lado
+    angosto = rollo == "58mm"
+    emisor = factura.emisor
+    datos = factura.json_original or {}
+    moneda = factura.moneda
+
+    base = ParagraphStyle("tk", fontName="Helvetica", fontSize=7 if angosto else 8, leading=9 if angosto else 10)
+    centro = ParagraphStyle("tkc", parent=base, alignment=1)
+    negrita_c = ParagraphStyle("tkbc", parent=centro, fontName="Helvetica-Bold")
+    derecha = ParagraphStyle("tkr", parent=base, alignment=2)
+    chica = ParagraphStyle("tks", parent=centro, fontSize=6, leading=7.5)
+
+    def linea_separadora():
+        t = Table([[""]], colWidths=[util], rowHeights=[1.5 * mm])
+        t.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 0.4, colors.black, None, (1, 1))]))
+        return t
+
+    def par(izq, der, estilo=base):
+        t = Table([[Paragraph(izq, estilo), Paragraph(der, ParagraphStyle("d", parent=estilo, alignment=2))]],
+                  colWidths=[util * 0.55, util * 0.45])
+        t.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                               ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5)]))
+        return t
+
+    partes = []
+    logo = _logo(emisor, max_ancho=util * 0.6, max_alto=15 * mm)
+    if logo is not None:
+        logo.hAlign = "CENTER"
+        partes += [logo, Spacer(0, 1.5 * mm)]
+    partes.append(Paragraph(f"<b>{escape(emisor.nombre_comercial or emisor.nombre)}</b>",
+                            ParagraphStyle("tkn", parent=centro, fontSize=base.fontSize + 2, leading=base.leading + 2)))
+    if emisor.nombre_comercial:
+        partes.append(_p(emisor.nombre, centro))
+    partes.append(_p(f"Céd. {emisor.numero_identificacion}", centro))
+    if emisor.telefono:
+        partes.append(_p(f"Tel. {emisor.telefono}", centro))
+    if emisor.otras_senas:
+        partes.append(_p(emisor.otras_senas, chica))
+    partes += [linea_separadora(), Spacer(0, 1 * mm)]
+
+    partes.append(Paragraph(f"<b>{escape(TIPOS_COMPROBANTE.get(factura.tipo_documento, 'Comprobante electrónico'))}</b>", centro))
+    partes.append(_p(f"N.º {factura.numero_consecutivo}", centro))
+    partes.append(_p(f"{factura.fecha_emision.astimezone(zona_cr()):%d/%m/%Y %H:%M}", centro))
+    partes.append(_p(f"Clave: {factura.clave}", chica))
+    partes.append(_p(f"Cliente: {factura.receptor_nombre or 'Consumidor final'}", base))
+    if factura.receptor_identificacion:
+        partes.append(_p(f"Identificación: {factura.receptor_identificacion}", base))
+    partes += [linea_separadora(), Spacer(0, 1 * mm)]
+
+    for d in factura.detalles:
+        cantidad = f"{Decimal(d.cantidad):,.3f}".rstrip("0").rstrip(".")
+        partes.append(_p(d.descripcion, base))
+        iva = f" IVA {Decimal(d.impuesto_porcentaje or 0):g}%" if d.impuesto_porcentaje else ""
+        partes.append(par(escape(f"{cantidad} x {Decimal(d.precio_unitario):,.2f}{iva}"), f"{Decimal(d.monto_total):,.2f}"))
+        if d.descuento:
+            partes.append(par("Descuento", f"-{Decimal(d.descuento):,.2f}"))
+    partes += [linea_separadora(), Spacer(0, 1 * mm)]
+
+    partes.append(par("Subtotal", _m(Decimal(factura.total_venta or 0) - Decimal(factura.total_descuentos or 0), moneda)))
+    if factura.total_descuentos:
+        partes.append(par("Descuentos", _m(factura.total_descuentos, moneda)))
+    partes.append(par("IVA", _m(factura.monto_impuesto, moneda)))
+    if factura.total_otros_cargos:
+        partes.append(par("Otros cargos", _m(factura.total_otros_cargos, moneda)))
+    negrita = ParagraphStyle("tkb", parent=base, fontName="Helvetica-Bold", fontSize=base.fontSize + 2, leading=base.leading + 2)
+    partes.append(par("TOTAL", _m(factura.monto_total, moneda), negrita))
+    medios = ", ".join(MEDIOS_PAGO.get(m.get("tipo"), m.get("tipo")) for m in datos.get("medios_pago", []))
+    partes.append(_p(f"Pago: {medios}" if medios else "", base))
+    if datos.get("notas"):
+        partes.append(_p(datos["notas"], base))
+    partes += [Spacer(0, 2 * mm)]
+    qr = _qr(factura.clave, tamano=min(28 * mm, util * 0.6))
+    qr_tabla = Table([[qr]], colWidths=[util])
+    qr_tabla.setStyle(TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER")]))
+    partes += [qr_tabla, Spacer(0, 1 * mm)]
+    partes.append(_p("Comprobante electrónico v4.4 · Dirección General de Tributación. ¡Gracias por su compra!", chica))
+
+    alto = 2 * margen + 12 + sum(p.wrap(util, 10_000)[1] + p.getSpaceBefore() + p.getSpaceAfter() for p in partes) + 6 * mm
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=(ancho, alto), leftMargin=margen, rightMargin=margen,
+                            topMargin=margen, bottomMargin=margen,
+                            title=f"Tiquete {factura.numero_consecutivo}")
+    doc.build(partes)
+    return buffer.getvalue()

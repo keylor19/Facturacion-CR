@@ -86,8 +86,14 @@ class Emisor(Base):
     # Panel web para los usuarios de la empresa: servicio adicional y opcional (se cobra
     # aparte o se da como regalía). El producto principal es la conexión por API.
     facturacion_web = Column(Boolean, nullable=False, default=False, server_default="false")
+    # Recordatorios automáticos por correo a clientes con facturas a crédito vencidas
+    recordar_cobros = Column(Boolean, nullable=False, default=False, server_default="false")
     # Conexión por API (el sistema de facturación del cliente se integra con llaves de API).
     acceso_api = Column(Boolean, nullable=False, default=True, server_default="true")
+    # Empresa que un contador agregó solo para llevarle la contabilidad (no factura aquí)
+    solo_contabilidad = Column(Boolean, nullable=False, default=False, server_default="false")
+    contador_id = Column(UUID(as_uuid=False), ForeignKey("usuarios.id", ondelete="SET NULL", use_alter=True,
+                                                         name="fk_emisores_contador"), nullable=True)
     logo = Column(LargeBinary, nullable=True)            # PNG o JPEG para el PDF
     logo_tipo = Column(String(20), nullable=True)
 
@@ -128,6 +134,13 @@ class Usuario(Base):
     password_hash = Column(String(300), nullable=False)
     es_admin = Column(Boolean, nullable=False, default=False)
     emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=True, index=True)
+    rol = Column(String(20), nullable=False, default="dueno", server_default="dueno")  # dueno, contador o cajero
+    # Contador externo: lleva la contabilidad de las empresas que le asigna el administrador
+    # (usuario_empresas) y de las que él mismo agrega. No factura ni ve el resto del panel.
+    es_contador = Column(Boolean, nullable=False, default=False, server_default="false")
+    # Cuenta creada con Google o Microsoft (además o en vez de contraseña)
+    oauth_proveedor = Column(String(20), nullable=True)
+    oauth_sub = Column(String(255), nullable=True)
     activo = Column(Boolean, nullable=False, default=True)
     intentos_fallidos = Column(Integer, nullable=False, default=0)
     bloqueado_hasta = Column(DateTime(timezone=True), nullable=True)
@@ -221,6 +234,8 @@ class Factura(Base):
     intentos_envio = Column(Integer, nullable=False, default=0)
     ultimo_envio = Column(DateTime(timezone=True), nullable=True)
     correo_enviado = Column(Boolean, nullable=False, default=False)
+    # Comprobante emitido en otro sistema y cargado por el contador (su XML): no se envía a Hacienda
+    importada = Column(Boolean, nullable=False, default=False, server_default="false")
 
     # Documentos
     xml_firmado = Column(Text, nullable=True)
@@ -468,6 +483,17 @@ class AjustesVentas(Base):
     instrucciones_pago = Column(Text, nullable=True)     # cuentas IBAN, SINPE Móvil…
     contacto_ventas = Column(String(200), nullable=True) # teléfono / WhatsApp / correo para comprar
     correo_avisos = Column(String(160), nullable=True)   # copia de cada aviso al administrador
+    # Inscripción propia desde la página de entrada, con prueba gratis
+    autoregistro = Column(Boolean, nullable=False, default=True, server_default="true")
+    prueba_documentos = Column(Integer, nullable=False, default=20, server_default="20")
+    prueba_dias = Column(Integer, nullable=False, default=15, server_default="15")   # días del sistema web gratis
+    # Precio por mes del sistema web cuando el cliente lo compra solo (vacío = no se ofrece)
+    precio_web_mensual = Column(Numeric(18, 2), nullable=True)
+    moneda_web = Column(String(3), nullable=False, default="CRC", server_default="CRC")
+    # Mensualidades (vacío = ese servicio no se cobra)
+    precio_contabilidad_mensual = Column(Numeric(18, 2), nullable=True)   # el dueño lleva su propia contabilidad
+    precio_contador_mensual = Column(Numeric(18, 2), nullable=True)       # cuenta de contador
+    dias_para_pagar = Column(Integer, nullable=False, default=10, server_default="10")
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
@@ -751,6 +777,229 @@ def siguiente_consecutivo(db: Session, emisor_id: str, sucursal: int, terminal: 
     contador.ultimo += 1
     db.flush()
     return contador.ultimo
+
+
+class Abono(Base):
+    """
+    Pago recibido de una factura a crédito comercial (condición 02). Hacienda no pide
+    comprobante para estos cobros (a diferencia del recibo de pago de las condiciones
+    08 y 10), así que se registran aquí para llevar la cuenta por cobrar.
+    """
+    __tablename__ = "abonos"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False, index=True)
+    factura_id = Column(UUID(as_uuid=False), ForeignKey("facturas.id", ondelete="CASCADE"), nullable=False, index=True)
+    fecha = Column(Date, nullable=False)
+    monto = Column(Numeric(18, 5), nullable=False)          # en la moneda de la factura
+    medio_pago = Column(String(2), nullable=False, default="04")
+    referencia = Column(String(100), nullable=True)         # número de transferencia, SINPE, cheque…
+    nota = Column(String(250), nullable=True)
+    registrado_por = Column(String(200), nullable=True)
+    anulado = Column(Boolean, nullable=False, default=False, server_default="false")
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+class FacturaRecurrente(Base):
+    """
+    Plantilla de un comprobante que se emite solo cada cierto tiempo (alquiler,
+    mensualidad, servicio profesional). 'datos' es el mismo cuerpo de POST /facturas.
+    """
+    __tablename__ = "facturas_recurrentes"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False, index=True)
+    nombre = Column(String(120), nullable=False)
+    datos = Column(JSONB, nullable=False)
+    frecuencia = Column(String(10), nullable=False, default="mensual")   # semanal | quincenal | mensual | anual
+    proxima = Column(Date, nullable=False, index=True)                  # próxima fecha de emisión
+    hasta = Column(Date, nullable=True)                                  # última fecha (null = sin fin)
+    activa = Column(Boolean, nullable=False, default=True)
+    emitidas = Column(Integer, nullable=False, default=0)
+    ultima_factura_id = Column(UUID(as_uuid=False), ForeignKey("facturas.id", ondelete="SET NULL"), nullable=True)
+    ultimo_error = Column(Text, nullable=True)
+    creada_por = Column(String(200), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Registro(Base):
+    """Inscripción propia pendiente de confirmar por correo (solo se guarda el hash del enlace)."""
+    __tablename__ = "registros"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=True)
+    usuario_id = Column(UUID(as_uuid=False), ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
+    expira = Column(DateTime(timezone=True), nullable=False)
+    confirmado = Column(DateTime(timezone=True), nullable=True)
+    ip = Column(String(45), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+class SolicitudCompra(Base):
+    """
+    El cliente pagó por SINPE Móvil o transferencia y lo reporta desde el panel; el
+    administrador revisa el pago y la aprueba (se acredita) o la rechaza.
+    """
+    __tablename__ = "solicitudes_compra"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False, index=True)
+    plan_id = Column(UUID(as_uuid=False), ForeignKey("planes.id", ondelete="SET NULL"), nullable=True)
+    documentos = Column(Integer, nullable=False, default=0)
+    meses_web = Column(Integer, nullable=False, default=0)
+    monto = Column(Numeric(18, 2), nullable=False)
+    moneda = Column(String(3), nullable=False, default="CRC")
+    medio_pago = Column(String(2), nullable=False, default="06")
+    referencia = Column(String(100), nullable=False)
+    comprobante = Column(LargeBinary, nullable=True)        # foto o PDF del comprobante de pago
+    comprobante_tipo = Column(String(40), nullable=True)
+    estado = Column(String(10), nullable=False, default="PENDIENTE", index=True)   # PENDIENTE | APROBADA | RECHAZADA
+    motivo = Column(String(300), nullable=True)
+    solicitada_por = Column(String(200), nullable=True)
+    resuelta_por = Column(String(200), nullable=True)
+    resuelta_en = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+class UsuarioEmpresa(Base):
+    """
+    Acceso de un usuario a una empresa más (el contador que atiende a varios clientes).
+    Esos usuarios tienen emisor_id NULL y eligen la empresa en el selector del panel.
+    """
+    __tablename__ = "usuario_empresas"
+
+    usuario_id = Column(UUID(as_uuid=False), ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False, index=True)
+    rol = Column(String(20), nullable=False, default="contador", server_default="contador")
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (PrimaryKeyConstraint("usuario_id", "emisor_id"),)
+
+
+class CuentaContable(Base):
+    """
+    Cuenta del catálogo de una empresa. El código con puntos da la jerarquía
+    (1 Activo, 1.1 Activo corriente, 1.1.01 Caja y bancos…). Solo las cuentas que
+    aceptan movimientos llevan asientos; las demás suman a sus hijas.
+    clave_sistema marca las cuentas que usan los asientos automáticos (ventas, IVA…).
+    """
+    __tablename__ = "cuentas_contables"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False, index=True)
+    codigo = Column(String(30), nullable=False)
+    nombre = Column(String(150), nullable=False)
+    tipo = Column(String(10), nullable=False)          # activo | pasivo | patrimonio | ingreso | costo | gasto
+    acepta_movimientos = Column(Boolean, nullable=False, default=True)
+    clave_sistema = Column(String(30), nullable=True)
+    activa = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (UniqueConstraint("emisor_id", "codigo", name="uq_cuenta_emisor_codigo"),)
+
+
+class Asiento(Base):
+    """Asiento contable. Los automáticos guardan el comprobante que los originó en documento_ref."""
+    __tablename__ = "asientos"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False)
+    numero = Column(Integer, nullable=False)
+    fecha = Column(Date, nullable=False)
+    descripcion = Column(String(300), nullable=False)
+    origen = Column(String(15), nullable=False, default="manual")   # manual | venta | compra | cobro | apertura
+    documento_ref = Column(String(80), nullable=True)               # p. ej. factura:<id>, recibido:<id>, abono:<id>
+    editado = Column(Boolean, nullable=False, default=False)        # automático que el contador corrigió a mano
+    anulado = Column(Boolean, nullable=False, default=False)
+    creado_por = Column(String(200), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    lineas = relationship("AsientoLinea", back_populates="asiento", cascade="all, delete-orphan",
+                          order_by="AsientoLinea.haber, AsientoLinea.id")
+
+    __table_args__ = (
+        UniqueConstraint("emisor_id", "numero", name="uq_asiento_numero"),
+        Index("ix_asientos_emisor_fecha", "emisor_id", "fecha"),
+        Index("uq_asiento_documento", "emisor_id", "documento_ref", unique=True,
+              postgresql_where=text("documento_ref IS NOT NULL")),
+    )
+
+
+class AsientoLinea(Base):
+    __tablename__ = "asiento_lineas"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    asiento_id = Column(UUID(as_uuid=False), ForeignKey("asientos.id", ondelete="CASCADE"), nullable=False, index=True)
+    cuenta_id = Column(UUID(as_uuid=False), ForeignKey("cuentas_contables.id"), nullable=False, index=True)
+    debe = Column(Numeric(18, 2), nullable=False, default=0)
+    haber = Column(Numeric(18, 2), nullable=False, default=0)
+    detalle = Column(String(200), nullable=True)
+
+    asiento = relationship("Asiento", back_populates="lineas")
+    cuenta = relationship("CuentaContable")
+
+
+class PeriodoCerrado(Base):
+    """Mes cerrado por el contador: ya no se pueden crear, cambiar ni anular asientos de ese mes."""
+    __tablename__ = "periodos_cerrados"
+
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=False)
+    mes = Column(Date, nullable=False)        # día 1 del mes
+    cerrado_por = Column(String(200), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (PrimaryKeyConstraint("emisor_id", "mes"),)
+
+
+class Contratacion(Base):
+    """
+    Servicio mensual que pidió un cliente (empresa o contador) con el precio de ese momento.
+    Queda activo al pedirlo y se cobra en la factura mensual; hasta = día en que lo canceló.
+    """
+    __tablename__ = "contrataciones"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    cliente = Column(String(40), nullable=False)           # e:<emisor_id> o u:<usuario_id>
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=True)
+    usuario_id = Column(UUID(as_uuid=False), ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=True)
+    servicio = Column(String(20), nullable=False)          # facturacion_web | contabilidad | contador
+    precio = Column(Numeric(18, 2), nullable=False)        # por mes
+    moneda = Column(String(3), nullable=False, default="CRC")
+    desde = Column(Date, nullable=False)
+    hasta = Column(Date, nullable=True)
+    gratis_hasta = Column(Date, nullable=True)             # prueba gratis: no se cobra hasta esa fecha
+    creado_por = Column(String(200), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (Index("ix_contrataciones_cliente", "cliente", "servicio"),)
+
+
+class CobroMensual(Base):
+    """Factura mensual de un cliente por los servicios del mes (proporcional a los días usados)."""
+    __tablename__ = "cobros_mensuales"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    cliente = Column(String(40), nullable=False)
+    emisor_id = Column(UUID(as_uuid=False), ForeignKey("emisores.id", ondelete="CASCADE"), nullable=True)
+    usuario_id = Column(UUID(as_uuid=False), ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=True)
+    periodo = Column(Date, nullable=False)                  # día 1 del mes cobrado
+    lineas = Column(JSONB, nullable=False)                  # [{servicio, concepto, dias, monto}]
+    total = Column(Numeric(18, 2), nullable=False)
+    moneda = Column(String(3), nullable=False, default="CRC")
+    emitido = Column(Date, nullable=False)
+    vence = Column(Date, nullable=False)
+    estado = Column(String(10), nullable=False, default="PENDIENTE", index=True)   # PENDIENTE | REPORTADO | PAGADO | ANULADO
+    referencia_pago = Column(String(100), nullable=True)
+    reportado_en = Column(DateTime(timezone=True), nullable=True)
+    pagado_en = Column(DateTime(timezone=True), nullable=True)
+    confirmado_por = Column(String(200), nullable=True)
+    factura_id = Column(UUID(as_uuid=False), ForeignKey("facturas.id", ondelete="SET NULL"), nullable=True)
+    comprobante_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (UniqueConstraint("cliente", "periodo", name="uq_cobro_cliente_periodo"),)
 
 
 def get_db():

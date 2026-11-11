@@ -19,7 +19,7 @@ al estado y notifica.
 | **Recepción** | Registro de facturas de proveedores (XML), verificación de firma y **Mensaje Receptor**: aceptación, aceptación parcial o rechazo con condición del IVA (crédito fiscal) |
 | **Hacienda** | Envío y consulta de estado, listado de comprobantes en Hacienda, callback, **consulta de contribuyentes y actividades**, **exoneraciones**, **CABYS** y **tipo de cambio** (automático para USD/EUR) |
 | **Documentos** | XML firmado, respuesta de Hacienda y **PDF** con QR; **envío por correo** automático al aceptarse |
-| **Contabilidad** | **Resumen de IVA mensual** (insumo D-104), **libros de ventas y compras** en CSV (Excel) |
+| **Contabilidad** | Módulo para el **dueño de cada empresa** y sus **contadores** (ni los demás usuarios ni el administrador lo ven): catálogo de cuentas NIIF para PYMES, asientos manuales y **automáticos desde los comprobantes**, libro diario y mayor, balance de comprobación, **balance general** y **estado de resultados**, cierre de meses, **resumen de IVA**, **borrador D-104** y libros de ventas y compras. El contador escoge por cédula las empresas que ya facturan aquí (la empresa recibe aviso y puede quitarle el acceso) o inscribe las que no facturan aquí cargando sus **XML de Hacienda** |
 | **Operación** | Anulación con nota de crédito en un paso, reintentos automáticos, consulta periódica de estados, alerta de certificados por vencer, **webhooks** firmados, bitácora de auditoría |
 | **Panel web** | Para contadores: tablero, emisión con búsqueda en Hacienda y CABYS, comprobantes, facturas de proveedores, reportes, consultas, empresas y usuarios (`/panel/`) |
 | **Seguridad** | Usuarios con contraseña (scrypt) y bloqueo por intentos, API keys hasheadas por emisor o de administrador, aislamiento entre empresas, certificados y contraseñas **cifrados**, callback con token y verificación contra Hacienda, parser XML sin XXE, sin root en Docker |
@@ -189,8 +189,8 @@ El IVA se prorratea por tarifa y se controla el saldo (`GET /facturas/{id}/pagos
 | `POST /api/v1/recepcion` (base64) · `/recepcion/archivo` (archivo) | Registrar factura de proveedor |
 | `GET /api/v1/recepcion?pendientes=true` | Facturas de proveedores sin responder |
 | `POST /api/v1/recepcion/{id}/mensaje` | Aceptar (1) / aceptar parcial (2) / rechazar (3) |
-| `GET /api/v1/reportes/resumen-iva?anio=&mes=` | Resumen de IVA del mes |
-| `GET /api/v1/reportes/ventas.csv` · `/compras.csv` | Libros para Excel |
+| `GET /api/v1/reportes/resumen-iva?anio=&mes=` · `/d104` · `/ventas.csv` · `/compras.csv` | IVA del mes, borrador D-104 y libros (dueño de la empresa y contadores) |
+| `/api/v1/contabilidad/…` | Catálogo, asientos, contabilización automática (con costo de ventas), cierre de meses y del año, estados financieros e importación de XML (dueño y contadores) |
 | `GET /api/v1/hacienda/contribuyentes/{id}` · `/exoneraciones/{aut}` · `/cabys?q=` · `/productores/{id}` · `/tipo-cambio` · `/tipo-cambio/USD/historico` | Consultas públicas (con caché y límite de 8 consultas/s hacia Hacienda) |
 | `GET /api/v1/hacienda/estado/{clave}` · `/comprobantes` · `/comprobantes/{clave}` | Consultas directas a Hacienda |
 | `POST/GET/PATCH /api/v1/emisores…` · `/api-keys` | Administración |

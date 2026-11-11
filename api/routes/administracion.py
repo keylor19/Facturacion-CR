@@ -51,7 +51,7 @@ def tablero(fresco: bool = Query(default=False, description="Ignorar el caché")
 def diagnosticos(db: Session = Depends(get_db)):
     """Alertas de todas las empresas: {emisor_id: [alertas]}."""
     return _con_cache("admin:diagnosticos",
-                      lambda: {e.id: administracion.diagnostico(db, e) for e in db.scalars(select(Emisor))})
+                      lambda: {e.id: administracion.diagnostico(db, e) for e in db.scalars(select(Emisor).where(Emisor.solo_contabilidad.is_(False)))})
 
 
 @router.get("/emisores/{emisor_id}/diagnostico")
